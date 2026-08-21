@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""CLI for the Gemini Data Analytics (Conversational Analytics) HTTP API.
+
+Talks to https://geminidataanalytics.googleapis.com using Application Default
+Credentials. Covers full CRUD over Data Agents and Conversations, plus the
+stateful and stateless Chat surfaces.
+
+Auth: an ADC access token is fetched via
+`gcloud auth application-default print-access-token`. The billing/quota project
+is sent in the `x-goog-user-project` header.
+
+No third-party dependencies (urllib only).
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+DEFAULT_HOST = "https://geminidataanalytics.googleapis.com"
+DEFAULT_VERSION = "v1"  # GA. Use v1beta for preview-only features (e.g. queryData).
+DEFAULT_LOCATION = "global"
+
+
+def _die(msg):
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def get_token():
+    try:
+        out = subprocess.run(
+            ["gcloud", "auth", "application-default", "print-access-token"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return out.stdout.strip()
+    except FileNotFoundError:
+        _die("gcloud not found on PATH")
+    except subprocess.CalledProcessError as e:
+        _die(
+            "failed to obtain ADC token. Run "
+            "`gcloud auth application-default login` first.\n" + e.stderr.strip()
+        )
+
+
+class Client:
+    def __init__(self, project, location, version, host, token=None, verbose=False):
+        self.project = project
+        self.location = location
+        self.version = version
+        self.host = host.rstrip("/")
+        self.token = token or get_token()
+        self.verbose = verbose
+
+    @property
+    def parent(self):
+        return f"projects/{self.project}/locations/{self.location}"
+
+    def url(self, path):
+        # path is everything after the version, without a leading slash.
+        return f"{self.host}/{self.version}/{path}"
+
+    def request(self, method, path, body=None, query=None):
+        url = self.url(path)
+        if query:
+            pairs = []
+            for k, v in query.items():
+                if v is None:
+                    continue
+                pairs.append(f"{k}={urllib.parse.quote(str(v))}")
+            if pairs:
+                url += "?" + "&".join(pairs)
+        data = None
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "x-goog-user-project": self.project,
+        }
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        if self.verbose:
+            print(f"# {method} {url}", file=sys.stderr)
+            if body is not None:
+                print("# body: " + json.dumps(body), file=sys.stderr)
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(req) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")
+            _die(f"HTTP {e.code} {e.reason}\n{detail}")
+        except urllib.error.URLError as e:
+            _die(f"connection failed: {e.reason}")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+
+
+def out(obj):
+    print(json.dumps(obj, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Context / datasource builders
+# ---------------------------------------------------------------------------
+
+def parse_bq_table(spec):
+    """`project.dataset.table` -> BigQueryTableReference dict."""
+    parts = spec.split(".")
+    if len(parts) != 3:
+        _die(f"--bq-table must be project.dataset.table, got '{spec}'")
+    return {"projectId": parts[0], "datasetId": parts[1], "tableId": parts[2]}
+
+
+def build_context(args):
+    """Build a Context proto from --bq-table / --system-instruction flags."""
+    tables = [parse_bq_table(t) for t in (args.bq_table or [])]
+    if not tables:
+        _die("at least one --bq-table is required to build inline context")
+    ctx = {
+        "datasourceReferences": {"bq": {"tableReferences": tables}},
+    }
+    if args.system_instruction:
+        ctx["systemInstruction"] = args.system_instruction
+    if getattr(args, "python", False):
+        ctx.setdefault("options", {})["analysis"] = {"python": {"enabled": True}}
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Data Agents
+# ---------------------------------------------------------------------------
+
+def agents_create(c, args):
+    body = {
+        "dataAnalyticsAgent": {
+            "publishedContext": build_context(args),
+        }
+    }
+    if args.display_name:
+        body["displayName"] = args.display_name
+    if args.description:
+        body["description"] = args.description
+    # createSync returns the resource directly (no LRO).
+    path = f"{c.parent}/dataAgents:createSync"
+    out(c.request("POST", path, body=body, query={"dataAgentId": args.agent_id}))
+
+
+def agents_get(c, args):
+    out(c.request("GET", f"{c.parent}/dataAgents/{args.agent_id}"))
+
+
+def agents_list(c, args):
+    q = {"pageSize": args.page_size, "pageToken": args.page_token}
+    suffix = ":listAccessible" if args.accessible else ""
+    out(c.request("GET", f"{c.parent}/dataAgents{suffix}", query=q))
+
+
+def agents_update(c, args):
+    agent = {}
+    mask = []
+    if args.display_name is not None:
+        agent["displayName"] = args.display_name
+        mask.append("display_name")
+    if args.description is not None:
+        agent["description"] = args.description
+        mask.append("description")
+    if args.bq_table:
+        agent["dataAnalyticsAgent"] = {"publishedContext": build_context(args)}
+        mask.append("data_analytics_agent.published_context")
+    if not mask:
+        _die("nothing to update; pass --display-name/--description/--bq-table")
+    path = f"{c.parent}/dataAgents/{args.agent_id}:updateSync"
+    out(c.request("PATCH", path, body=agent, query={"updateMask": ",".join(mask)}))
+
+
+def agents_delete(c, args):
+    out(c.request("DELETE", f"{c.parent}/dataAgents/{args.agent_id}:deleteSync"))
+
+
+# ---------------------------------------------------------------------------
+# Conversations
+# ---------------------------------------------------------------------------
+
+def conversations_create(c, args):
+    body = {"agents": [f"{c.parent}/dataAgents/{args.agent_id}"]}
+    q = {"conversationId": args.conversation_id}
+    out(c.request("POST", f"{c.parent}/conversations", body=body, query=q))
+
+
+def conversations_get(c, args):
+    out(c.request("GET", f"{c.parent}/conversations/{args.conversation_id}"))
+
+
+def conversations_list(c, args):
+    q = {"pageSize": args.page_size, "pageToken": args.page_token, "filter": args.filter}
+    out(c.request("GET", f"{c.parent}/conversations", query=q))
+
+
+def conversations_delete(c, args):
+    out(c.request("DELETE", f"{c.parent}/conversations/{args.conversation_id}"))
+
+
+def conversations_messages(c, args):
+    q = {"pageSize": args.page_size, "pageToken": args.page_token}
+    path = f"{c.parent}/conversations/{args.conversation_id}/messages"
+    out(c.request("GET", path, query=q))
+
+
+# ---------------------------------------------------------------------------
+# Chat
+# ---------------------------------------------------------------------------
+
+def _chat_body(c, args):
+    body = {
+        "parent": c.parent,
+        "messages": [{"userMessage": {"text": args.message}}],
+    }
+    if args.conversation_id:
+        # Stateful chat against a persisted conversation + agent.
+        if not args.agent_id:
+            _die("--agent-id is required with --conversation-id")
+        body["conversationReference"] = {
+            "conversation": f"{c.parent}/conversations/{args.conversation_id}",
+            "dataAgentContext": {
+                "dataAgent": f"{c.parent}/dataAgents/{args.agent_id}"
+            },
+        }
+    elif args.agent_id:
+        # Stateless chat against an agent's context.
+        body["dataAgentContext"] = {
+            "dataAgent": f"{c.parent}/dataAgents/{args.agent_id}"
+        }
+    else:
+        # Fully stateless: inline context built from --bq-table.
+        body["inlineContext"] = build_context(args)
+    return body
+
+
+def chat(c, args):
+    # :chat is the public chat endpoint. Over REST it returns a JSON array of
+    # streamed Message objects (thoughts, generated queries, and the answer).
+    body = _chat_body(c, args)
+    resp = c.request("POST", f"{c.parent}:chat", body=body)
+    if getattr(args, "answer_only", False):
+        print(_final_answer(resp))
+    else:
+        out(resp)
+
+
+def _final_answer(messages):
+    """Concatenate the FINAL_RESPONSE text parts from a :chat response."""
+    parts = []
+    if isinstance(messages, list):
+        for m in messages:
+            text = m.get("systemMessage", {}).get("text", {})
+            if text.get("textType") == "FINAL_RESPONSE":
+                parts.extend(text.get("parts", []))
+    return "\n".join(parts) if parts else json.dumps(messages, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Raw escape hatch
+# ---------------------------------------------------------------------------
+
+def raw(c, args):
+    # Allow {parent} / {location} / {project} substitution in both path and body.
+    def tmpl(s):
+        return s.replace("{parent}", c.parent).replace(
+            "{project}", c.project).replace("{location}", c.location)
+
+    body = None
+    if args.body:
+        raw_body = sys.stdin.read() if args.body == "-" else args.body
+        body = json.loads(tmpl(raw_body))
+    path = tmpl(args.path).lstrip("/")
+    out(c.request(args.method.upper(), path, body=body))
+
+
+# ---------------------------------------------------------------------------
+# Arg parsing
+# ---------------------------------------------------------------------------
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="gda", description=__doc__.splitlines()[0])
+    p.add_argument("--project", required=True, help="GCP project id (billing/quota)")
+    p.add_argument("--location", default=DEFAULT_LOCATION, help="default: global")
+    p.add_argument("--version", default=DEFAULT_VERSION,
+                   help="API version: v1beta (default), v1alpha, v1")
+    p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="print request method/URL/body to stderr")
+    sub = p.add_subparsers(dest="resource", required=True)
+
+    def add_context_flags(sp):
+        sp.add_argument("--bq-table", action="append", metavar="PROJ.DATASET.TABLE",
+                        help="BigQuery table; repeatable")
+        sp.add_argument("--system-instruction", help="business context / instructions")
+        sp.add_argument("--python", action="store_true",
+                        help="enable Python analysis in context")
+
+    # agents ------------------------------------------------------------
+    ag = sub.add_parser("agents", help="manage Data Agents")
+    ags = ag.add_subparsers(dest="action", required=True)
+
+    a = ags.add_parser("create")
+    a.add_argument("--agent-id", required=True)
+    a.add_argument("--display-name")
+    a.add_argument("--description")
+    add_context_flags(a)
+    a.set_defaults(func=agents_create)
+
+    a = ags.add_parser("get")
+    a.add_argument("--agent-id", required=True)
+    a.set_defaults(func=agents_get)
+
+    a = ags.add_parser("list")
+    a.add_argument("--accessible", action="store_true",
+                   help="list agents the caller can access (listAccessible)")
+    a.add_argument("--page-size", type=int)
+    a.add_argument("--page-token")
+    a.set_defaults(func=agents_list)
+
+    a = ags.add_parser("update")
+    a.add_argument("--agent-id", required=True)
+    a.add_argument("--display-name")
+    a.add_argument("--description")
+    add_context_flags(a)
+    a.set_defaults(func=agents_update)
+
+    a = ags.add_parser("delete")
+    a.add_argument("--agent-id", required=True)
+    a.set_defaults(func=agents_delete)
+
+    # conversations -----------------------------------------------------
+    cv = sub.add_parser("conversations", help="manage Conversations")
+    cvs = cv.add_subparsers(dest="action", required=True)
+
+    a = cvs.add_parser("create")
+    a.add_argument("--agent-id", required=True)
+    a.add_argument("--conversation-id")
+    a.set_defaults(func=conversations_create)
+
+    a = cvs.add_parser("get")
+    a.add_argument("--conversation-id", required=True)
+    a.set_defaults(func=conversations_get)
+
+    a = cvs.add_parser("list")
+    a.add_argument("--filter", help="e.g. 'labels.key=value' or agent filter")
+    a.add_argument("--page-size", type=int)
+    a.add_argument("--page-token")
+    a.set_defaults(func=conversations_list)
+
+    a = cvs.add_parser("delete")
+    a.add_argument("--conversation-id", required=True)
+    a.set_defaults(func=conversations_delete)
+
+    a = cvs.add_parser("messages", help="list messages in a conversation")
+    a.add_argument("--conversation-id", required=True)
+    a.add_argument("--page-size", type=int)
+    a.add_argument("--page-token")
+    a.set_defaults(func=conversations_messages)
+
+    # chat --------------------------------------------------------------
+    ch = sub.add_parser("chat", help="ask a question")
+    ch.add_argument("--message", required=True, help="natural language question")
+    ch.add_argument("--agent-id", help="chat against this agent")
+    ch.add_argument("--conversation-id",
+                    help="stateful chat in this conversation (needs --agent-id)")
+    ch.add_argument("--answer-only", action="store_true",
+                    help="print just the final answer text, not the full message stream")
+    add_context_flags(ch)
+    ch.set_defaults(func=chat)
+
+    # raw ---------------------------------------------------------------
+    rw = sub.add_parser("raw", help="arbitrary request against any endpoint")
+    rw.add_argument("method", help="GET/POST/PATCH/DELETE")
+    rw.add_argument("path", help="path after version; supports {parent} template")
+    rw.add_argument("--body", help="JSON string, or '-' to read stdin")
+    rw.set_defaults(func=raw)
+
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    c = Client(
+        project=args.project,
+        location=args.location,
+        version=args.version,
+        host=args.host,
+        verbose=args.verbose,
+    )
+    args.func(c, args)
+
+
+if __name__ == "__main__":
+    main()
