@@ -49,6 +49,8 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 - `--location` defaults to `global`.
 - `--version` defaults to `v1` (GA). `v1beta` / `v1alpha` expose preview features.
 - `-v` echoes the exact method / URL / body to stderr.
+- `--access-token` (or `$GDA_ACCESS_TOKEN`) supplies an OAuth2 token directly,
+  bypassing gcloud ADC.
 
 ## Files
 

@@ -46,6 +46,8 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
   use). `v1beta` (BETA) and `v1alpha` (ALPHA) expose preview-only features.
 - `-v` echoes the method/URL/body to stderr — use it to show the user the exact
   HTTP call.
+- `--access-token` (or `$GDA_ACCESS_TOKEN`) supplies an OAuth2 token directly,
+  bypassing gcloud ADC.
 - Output is always the raw JSON response, pretty-printed.
 
 See `REFERENCE.md` for the full endpoint and payload reference.

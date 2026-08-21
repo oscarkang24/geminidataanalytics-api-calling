@@ -77,7 +77,7 @@ Verify the **observable** before moving on. Grade PASS/FAIL.
 | B6 | "Start a saved conversation `$CONV_ID` with that agent and ask a question." | `conversations create ...` then `chat --agent-id $AGENT_ID --conversation-id $CONV_ID --message "..."` | Answer returned; uses `conversationReference`. |
 | B7 | "Show the messages in that conversation." | `conversations messages --conversation-id $CONV_ID` | Prior turn(s) persisted — history is there. |
 | B8 | "Rename the agent to 'Eval agent (updated)'." | `agents update --agent-id $AGENT_ID --display-name "Eval agent (updated)"` | Response shows new `displayName`. |
-| B9 | "Clean up: delete the conversation and the agent." | `conversations delete ...` then `agents delete ...` | Both deletes succeed; a follow-up `agents get` errors (NOT_FOUND). |
+| B9 | "Clean up: delete the conversation and the agent." | `conversations delete ...` then `agents delete ...` | Both deletes succeed. Note: agent delete is a **soft delete** — the resource keeps existing with a `deleteTime`/`purgeTime` (~30 days out) and is excluded from `agents list`. Verify it's gone from `agents list`; do **not** assert `agents get` returns NOT_FOUND. |
 
 ### B10. External-safety spot check
 

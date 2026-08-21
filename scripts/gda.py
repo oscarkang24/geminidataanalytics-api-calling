@@ -5,8 +5,9 @@ Talks to https://geminidataanalytics.googleapis.com using Application Default
 Credentials. Covers full CRUD over Data Agents and Conversations, plus the
 stateful and stateless Chat surfaces.
 
-Auth: an ADC access token is fetched via
-`gcloud auth application-default print-access-token`. The billing/quota project
+Auth: by default an ADC access token is fetched via
+`gcloud auth application-default print-access-token`. Override it with
+`--access-token` or the `$GDA_ACCESS_TOKEN` env var. The billing/quota project
 is sent in the `x-goog-user-project` header.
 
 No third-party dependencies (urllib only).
@@ -14,6 +15,7 @@ No third-party dependencies (urllib only).
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -173,11 +175,21 @@ def agents_update(c, args):
     if args.description is not None:
         agent["description"] = args.description
         mask.append("description")
+    # Mask individual fields *inside* publishedContext, so changing one (e.g. the
+    # table) never clobbers a sibling like systemInstruction.
+    ctx = {}
     if args.bq_table:
-        agent["dataAnalyticsAgent"] = {"publishedContext": build_context(args)}
-        mask.append("data_analytics_agent.published_context")
+        tables = [parse_bq_table(t) for t in args.bq_table]
+        ctx["datasourceReferences"] = {"bq": {"tableReferences": tables}}
+        mask.append("data_analytics_agent.published_context.datasource_references")
+    if args.system_instruction is not None:
+        ctx["systemInstruction"] = args.system_instruction
+        mask.append("data_analytics_agent.published_context.system_instruction")
+    if ctx:
+        agent["dataAnalyticsAgent"] = {"publishedContext": ctx}
     if not mask:
-        _die("nothing to update; pass --display-name/--description/--bq-table")
+        _die("nothing to update; pass --display-name / --description / "
+             "--bq-table / --system-instruction")
     path = f"{c.parent}/dataAgents/{args.agent_id}:updateSync"
     out(c.request("PATCH", path, body=agent, query={"updateMask": ",".join(mask)}))
 
@@ -257,14 +269,54 @@ def chat(c, args):
 
 
 def _final_answer(messages):
-    """Concatenate the FINAL_RESPONSE text parts from a :chat response."""
-    parts = []
-    if isinstance(messages, list):
-        for m in messages:
-            text = m.get("systemMessage", {}).get("text", {})
-            if text.get("textType") == "FINAL_RESPONSE":
-                parts.extend(text.get("parts", []))
-    return "\n".join(parts) if parts else json.dumps(messages, indent=2)
+    """Render the answer from a :chat response.
+
+    A tabular answer arrives as a separate `data` system message; the
+    FINAL_RESPONSE text is only a lead-in. Returning the text alone would
+    silently drop the rows, so we append any data blocks too. If nothing is
+    recognized we fall back to the full stream rather than dropping the answer.
+    """
+    if not isinstance(messages, list):
+        return json.dumps(messages, indent=2)
+    blocks = []
+    for m in messages:
+        sysmsg = m.get("systemMessage")
+        if not isinstance(sysmsg, dict):
+            continue
+        text = sysmsg.get("text")
+        if isinstance(text, dict) and text.get("textType") == "FINAL_RESPONSE":
+            parts = text.get("parts", [])
+            if parts:
+                blocks.append("\n".join(parts))
+        if "data" in sysmsg:
+            rendered = _render_data(sysmsg["data"])
+            if rendered:
+                blocks.append(rendered)
+    return "\n\n".join(blocks) if blocks else json.dumps(messages, indent=2)
+
+
+def _render_data(data_msg):
+    """Best-effort render of a DataMessage result as a TSV table; JSON fallback.
+
+    The exact field names are inferred from the CA API DataMessage shape; if the
+    structure isn't what we expect we return the raw JSON so the rows are never
+    silently lost.
+    """
+    if not isinstance(data_msg, dict):
+        return None
+    result = data_msg.get("result") or {}
+    fields = (result.get("schema") or {}).get("fields") or []
+    rows = result.get("data")
+    if fields and isinstance(rows, list):
+        headers = [f.get("name", "") for f in fields]
+        lines = ["\t".join(headers)]
+        for row in rows:
+            if isinstance(row, dict):
+                lines.append("\t".join(str(row.get(h, "")) for h in headers))
+            else:
+                lines.append(str(row))
+        return "\n".join(lines)
+    return json.dumps(data_msg, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +348,9 @@ def build_parser():
     p.add_argument("--version", default=DEFAULT_VERSION,
                    help="API version: v1beta (default), v1alpha, v1")
     p.add_argument("--host", default=DEFAULT_HOST)
+    p.add_argument("--access-token",
+                   help="OAuth2 access token to use instead of gcloud ADC; "
+                        "falls back to $GDA_ACCESS_TOKEN")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="print request method/URL/body to stderr")
     sub = p.add_subparsers(dest="resource", required=True)
@@ -392,11 +447,13 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    token = args.access_token or os.environ.get("GDA_ACCESS_TOKEN")
     c = Client(
         project=args.project,
         location=args.location,
         version=args.version,
         host=args.host,
+        token=token,
         verbose=args.verbose,
     )
     args.func(c, args)
