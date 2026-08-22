@@ -119,6 +119,72 @@ Any non-GA endpoint here is an automatic FAIL for the production constraint.
 
 ---
 
+## C. Prerequisite behaviour (automated)
+
+This skill calls a cloud API, so on any machine without credentials **every**
+case fails the same way. What matters then is not whether the task succeeds —
+it cannot — but whether the session recognises a missing prerequisite, stops,
+and reports it usefully, instead of hunting the filesystem for credentials that
+are not there.
+
+That failure mode is easy to miss in review, because a session that spends
+fifteen turns investigating still ends with a correct-sounding answer. It is
+only visible in the transcript. So this suite measures the transcript.
+
+### Running it
+
+```bash
+# 1. Snapshot the version you want to compare against
+git show <ref>:SKILL.md > <workspace>/skill-snapshot/SKILL.md   # etc.
+
+# 2. Run each prompt in evals/evals.json twice — once against the installed
+#    skill, once against the snapshot — in a session with no prior context,
+#    saving outputs/transcript.md (every command, verbatim) and outputs/reply.md
+#    to <workspace>/iteration-N/eval-<id>-<name>/{with_skill,old_skill}/
+
+# 3. Grade every run
+python3 evals/grade.py <workspace>/iteration-N --all
+```
+
+`grade.py` writes a `grading.json` per run and needs no human to re-read
+transcripts, so the same bar applies to every future change.
+
+**Move the installed skill aside before baseline runs.** A skill installed in
+`~/.claude/skills/` puts its *description* into every session's skill list —
+including sessions pointed at an old snapshot. In the first run of this suite a
+baseline session quoted the new gate's wording verbatim while reading a
+snapshot that did not contain it. The baseline was being helped by the change it
+was supposed to be a control for, so any measured improvement is a **lower
+bound**. To get a clean control:
+
+```bash
+mv ~/.claude/skills/geminidataanalytics /tmp/skill-parked   # before baselines
+mv /tmp/skill-parked ~/.claude/skills/geminidataanalytics   # after
+```
+
+**Count only task commands.** Writing `transcript.md` and `reply.md` is eval
+scaffolding; `grade.py` filters those out. Counting them adds the same two
+commands to every run and blurs the metric.
+
+### What it checks
+
+| Check | Why it matters |
+| --- | --- |
+| `doctor` within the first 2 commands | The prerequisite is knowable immediately; anything else is guessing. |
+| No environment investigation | `find` for key files, reading proxy docs, probing `__agentproxy`, sending a token to `tokeninfo`, or trying an env placeholder as a real token. Each can only re-derive what `doctor` already printed. |
+| 5 commands or fewer | A prerequisite should cost a check, not an investigation. |
+| Reply names credentials as the blocker | The user needs the cause, not a symptom. |
+| Reply separates network from auth | The first fork in any container; `doctor` answers it, so the reply should too. |
+| gcloud advice marked unavailable when absent | Leading with `gcloud auth application-default login` on a machine without gcloud is the dead end that cost the most time in practice. |
+| Reply offers a no-gcloud fix | Service-account key or `$GDA_ACCESS_TOKEN` — the paths that work in a container. |
+| Does not claim the agent was created | A confident false success is the worst outcome. |
+
+### Grading
+
+Report per configuration: checks passed, and **median commands before the
+session stopped**. The command count is the headline — it is the difference
+between a session that reads the prerequisite and one that discovers it.
+
 ## Scoring
 
 - **Triggering:** __/8 positive, __/8 negative-correct, __/3 ambiguous-confirmed.
