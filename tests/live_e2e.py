@@ -14,6 +14,7 @@ deletes everything it created (cleanup runs even if a step fails).
 import argparse, json, os, subprocess, sys, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FIRST_ERROR = None
 CLI = os.path.join(REPO, "scripts", "gda.py")
 results = []
 
@@ -27,6 +28,9 @@ def gda(args, project, expect_ok=True):
     cmd += args
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if p.returncode != 0 and expect_ok:
+        global FIRST_ERROR
+        if FIRST_ERROR is None:
+            FIRST_ERROR = p.stderr.strip()[:600]
         print("    ! " + (p.stderr.strip().splitlines() or ["(no stderr)"])[0][:200])
     try:
         return p, json.loads(p.stdout) if p.stdout.strip() else None
@@ -115,6 +119,19 @@ def main():
 
     n, k = len(results), sum(1 for _, o in results if o)
     print(f"\n{'='*60}\n{k}/{n} live checks passed")
+
+    # A compact block to paste back: everything needed to judge the run, and
+    # nothing that needs scrolling. No credential values are included.
+    print("\n----- PASTE THIS -----")
+    print(f"result: {k}/{n} live checks passed")
+    print(f"python: {sys.version.split()[0]}  platform: {sys.platform}")
+    for name, ok in results:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+    if k != n:
+        print("failures above; first error text:")
+        for line in (FIRST_ERROR or "(none captured)").splitlines()[:6]:
+            print("    " + line)
+    print("----- END -----")
     return 0 if k == n else 1
 
 
