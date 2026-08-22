@@ -270,6 +270,30 @@ p, _ = run(["--project", "p", "--help"])
 check("--help says v1 is the default", "v1 (GA, default)" in p.stdout and "v1beta (default)" not in p.stdout,
       [l for l in p.stdout.splitlines() if "--version" in l])
 
+print("\n--- harness hermeticity ---")
+import harness as _h
+_env = _h.hermetic_env()
+check("ambient credential vars are scrubbed",
+      all(not _env.get(v) for v in ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS",
+                                    "GDA_PROJECT", "GOOGLE_CLOUD_PROJECT",
+                                    "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT")),
+      str({v: _env.get(v) for v in _h._SCRUB}))
+check("ADC config points at an empty dir",
+      not os.path.exists(os.path.join(_env["CLOUDSDK_CONFIG"],
+                                      "application_default_credentials.json")),
+      _env["CLOUDSDK_CONFIG"])
+check("metadata server cannot answer",
+      _env["GCE_METADATA_HOST"].startswith("127.0.0.1:"), _env["GCE_METADATA_HOST"])
+check("gcloud is not reachable on PATH",
+      not any(os.path.exists(os.path.join(d, "gcloud"))
+              for d in _env["PATH"].split(os.pathsep) if d), _env["PATH"][:200])
+# The decisive one: a real ambient credential must not leak into a run.
+p_, c_ = run(["--project", "p", "agents", "list"],
+             env_extra={"GDA_ACCESS_TOKEN": ""})
+check("with the token cleared, no ambient credential is found",
+      p_.returncode == 1 and c_ is None and "could not find credentials" in p_.stderr,
+      p_.stderr[:200])
+
 print("\n--- connection-error diagnosis ---")
 import ssl as _ssl, urllib.error as _ue, importlib.util as _ilu
 _spec = _ilu.spec_from_file_location("gda", os.path.join(

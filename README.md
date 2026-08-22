@@ -76,8 +76,13 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 ## Tests
 
 ```bash
-bash tests/run_all.sh      # 192 checks, no credentials needed
+bash tests/run_all.sh      # 197 checks, no credentials needed
 ```
+
+The harness is hermetic: every run starts from an environment with ambient
+credentials scrubbed (no `$GOOGLE_APPLICATION_CREDENTIALS`, no ADC file, no
+metadata server, no `gcloud` on `PATH`), so results do not depend on whether
+the machine running them happens to be signed in to Google Cloud.
 
 It ends with a per-suite `PASS` / `FAIL` / `SKIP` summary and names the
 command to re-run any failing suite on its own. A suite that skips itself

@@ -5,7 +5,7 @@ Starts a local HTTP server that records the exact request the CLI sends, runs
 the CLI against it, and asserts on method/path/query/headers/body plus the
 CLI's stdout/stderr/exit code.
 """
-import json, os, subprocess, sys, threading, urllib.parse
+import json, os, subprocess, sys, tempfile, threading, urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,14 +51,46 @@ HOST = f"http://127.0.0.1:{PORT}"
 results = []
 
 
+# Credential and project discovery reads the ambient environment, so tests would
+# otherwise behave differently on a machine that actually has credentials — a
+# developer laptop with gcloud, an ADC file, or $GOOGLE_APPLICATION_CREDENTIALS
+# set, or a GCE box whose metadata server answers. Every run starts from a
+# scrubbed environment; a test that wants a source opts in through env_extra.
+_EMPTY_CFG = tempfile.mkdtemp(prefix="gda-empty-cfg-")
+_SCRUB = ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "GDA_PROJECT",
+          "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT",
+          "CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_CLOUD_QUOTA_PROJECT")
+
+
+def _path_without_gcloud():
+    """PATH minus any directory holding a gcloud executable."""
+    keep = []
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        if d and os.path.exists(os.path.join(d, "gcloud")):
+            continue
+        keep.append(d)
+    return os.pathsep.join(keep)
+
+
+def hermetic_env():
+    env = dict(os.environ)
+    for var in _SCRUB:
+        env.pop(var, None)
+    env["CLOUDSDK_CONFIG"] = _EMPTY_CFG          # no ADC file
+    env["GCE_METADATA_HOST"] = "127.0.0.1:1"     # refused instantly, never resolves
+    env["PATH"] = _path_without_gcloud()         # no gcloud CLI fallback
+    env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
+    env["no_proxy"] = "127.0.0.1,localhost"; env["NO_PROXY"] = env["no_proxy"]
+    return env
+
+
 def run(argv, stdin=None, status=200, body=None, env_extra=None, expect_call=True):
     """Run the CLI against the mock; return (proc, captured_request_or_None)."""
     CAPTURED.clear()
     RESPONSE["status"] = status
     RESPONSE["body"] = {"ok": True} if body is None else body
-    env = dict(os.environ, GDA_ACCESS_TOKEN="test-token-abc", PATH=os.environ["PATH"])
-    env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
-    env["no_proxy"] = "127.0.0.1,localhost"; env["NO_PROXY"] = env["no_proxy"]
+    env = hermetic_env()
+    env["GDA_ACCESS_TOKEN"] = "test-token-abc"   # the default; tests may clear it
     if env_extra:
         env.update(env_extra)
     proc = subprocess.run(
