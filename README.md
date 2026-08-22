@@ -21,6 +21,44 @@ metadata server, then the `gcloud` CLI.
 python3 scripts/gda.py doctor     # what will be used, and is it authorized?
 ```
 
+## Install
+
+```bash
+bash install.sh                 # -> ~/.claude/skills/geminidataanalytics
+bash install.sh /some/dir       # or a different skills folder
+```
+
+It copies only what the skill needs at runtime (`SKILL.md`, `REFERENCE.md`,
+`scripts/gda.py`), verifies the installed CLI runs, and leaves the tests and
+evals behind. Restart Claude Code afterwards so it picks the skill up.
+
+## Talk to it
+
+Once installed, you ask Claude — you do not type CLI commands. A first session
+usually looks like this:
+
+> Is my data agent setup working?
+
+> Create a data agent called sales-bot over `PROJECT.dataset.orders`. It should
+> know that revenue is always net of refunds.
+
+> Ask sales-bot how many orders we had last month.
+
+> Start a saved conversation with sales-bot and ask for the top 5 products by
+> revenue. Then ask "and what about the month before?"
+
+> What data agents do I have?
+
+> Delete the sales-bot agent and that conversation.
+
+Start with the first one. It runs `doctor`, which checks credentials, the
+project, and makes a real API call — and if something is missing it says which
+source it looked at and what to do, rather than failing at the third step.
+
+`evals/hero-queries.md` has the full set of thirteen, including what a good and
+a bad response look like for each, prompts that should *not* trigger the skill,
+and two that break auth on purpose to check the failure path.
+
 ## Prerequisites
 
 1. Credentials from any of the sources above (on a workstation:
@@ -31,7 +69,11 @@ python3 scripts/gda.py doctor     # what will be used, and is it authorized?
 
 `doctor` reports which of these is missing.
 
-## Quickstart
+## Using the CLI directly
+
+The skill drives this CLI for you, but it is a normal command-line tool — useful
+for scripting, for CI, and for seeing exactly what a call sends.
+
 
 ```bash
 # Create an agent over a BigQuery table (--project is optional once detected).
@@ -121,21 +163,6 @@ GDA_SKIP_OFFLINE=1 bash tests/run_live.sh PROJECT.dataset.orders
 It creates a data agent and a conversation, exercises all three chat modes, and
 deletes both afterwards. Ids are stamped per run, so it is safe to re-run (agent
 delete is a soft delete, and a fixed id would stay reserved for ~30 days).
-
-## Using as a Claude Code skill
-
-```bash
-bash install.sh                 # -> ~/.claude/skills/geminidataanalytics
-bash install.sh /some/dir       # or a different skills folder
-```
-
-It copies only what the skill needs at runtime (`SKILL.md`, `REFERENCE.md`,
-`scripts/gda.py`), verifies the installed CLI runs, and leaves the tests and
-evals behind. Restart Claude Code afterwards so it picks the skill up.
-
-The skill activates on prompts like
-"create a data agent", "chat with my data agent", or "ask a question over
-BigQuery with the Conversational Analytics API".
 
 ## API docs
 
