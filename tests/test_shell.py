@@ -107,4 +107,17 @@ for rel in ("scripts/gda.py", "tests/test_auth.py", "tests/test_tls.py"):
             bad.append(why)
     check(f"{rel}: no openssl flags missing from LibreSSL", not bad, "; ".join(bad))
 
+# Docs must not point at files install.sh deliberately leaves behind: a cold
+# session following SKILL.md gets "No such file or directory" with no clue why.
+INSTALLED = ("SKILL.md", "REFERENCE.md", "scripts/gda.py")
+skill_md = open(os.path.join(REPO, "SKILL.md"), encoding="utf-8").read()
+import re as _re
+refs = set(_re.findall(r'`(?:bash|python3) ((?:tests|scripts)/[\w./-]+)', skill_md))
+check("SKILL.md only references files that install.sh ships",
+      refs <= set(INSTALLED), f"references not installed: {sorted(refs - set(INSTALLED))}")
+
+installer = open(os.path.join(REPO, "install.sh"), encoding="utf-8").read()
+for f in INSTALLED:
+    check(f"install.sh ships {f}", f.split("/")[-1] in installer, "")
+
 sys.exit(summary())

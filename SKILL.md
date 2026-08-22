@@ -7,14 +7,16 @@ description: >
   conversations; and any request to ask, chat, or answer natural-language
   questions over BigQuery or Looker data through a data agent — e.g. "create a
   data agent on myproj.sales.orders", "list data agents", "ask my sales agent
-  what revenue was last month", "let the team query our warehouse in plain
-  English". Wraps the REST endpoints in a dependency-free Python CLI that
-  authenticates via Application Default Credentials. Do NOT use for: writing or
-  running plain BigQuery SQL, inspecting table schemas, local CSV or pandas
-  analysis, or other Google agent products (Vertex AI Agent Builder /
-  Agentspace, ADK, Dialogflow) — those are separate APIs. If someone asks for
-  natural-language querying of a warehouse without naming a product, confirm
-  they mean the Conversational Analytics API before running anything.
+  what revenue was last month". Also surface it when someone wants to query a
+  warehouse in plain English, or wants their team asking questions of their
+  data without writing SQL — but where the request names neither a product nor
+  an existing data agent, confirm they mean the Conversational Analytics API
+  before running anything. Wraps the REST endpoints in a dependency-free Python
+  CLI using Application Default Credentials. Do NOT use for: writing or running
+  plain BigQuery SQL, inspecting or altering table schemas, local CSV or pandas
+  analysis, general-purpose or customer-support chatbots, or other Google agent
+  products (Vertex AI Agent Builder / Agentspace, ADK / Agent Engine,
+  Dialogflow) — those are separate APIs.
 ---
 
 # Gemini Data Analytics HTTP API
@@ -44,8 +46,7 @@ can be obtained from it the CLI fails rather than quietly running as a different
 principal. `--access-token` and `--project` override their chain. The project is sent in
 `x-goog-user-project`.
 
-Run `python3 scripts/gda.py doctor` first (or `bash tests/run_live.sh
-PROJECT.dataset.table` to check the whole thing end to end) — it reports which source supplied
+Run `python3 scripts/gda.py doctor` first — it reports which source supplied
 each, then makes a real call to confirm the API is enabled and authorized:
 
 ```bash
@@ -64,7 +65,9 @@ python3 scripts/gda.py doctor
 3. The caller has the relevant `geminidataanalytics.*` IAM permissions and can
    read the underlying BigQuery data.
 
-`doctor` tells you which of these is missing.
+`doctor` checks these in order and stops at the first failure, so re-run it
+after each fix. It also reports whether the host is reachable without
+credentials, which separates an auth problem from a network or proxy one.
 
 ## The CLI
 
@@ -164,6 +167,49 @@ python3 scripts/gda.py --project P raw POST '{parent}/dataAgents/my-agent:getIam
 
 python3 scripts/gda.py --project P raw GET '{parent}/dataAgents/my-agent' --body -   # stdin JSON
 ```
+
+## Choosing values
+
+These are the decisions the user usually leaves implicit — ask rather than
+guess when the answer changes what gets created:
+
+- **`--project` is the billing/quota project, not necessarily the table's.**
+  `--bq-table acme.retail.orders` says where the *data* lives; the agent is
+  created in `--project`. They are often the same and often not. If the user
+  named only a table, say which project you are billing, or ask.
+- **`--agent-id` vs `--display-name`.** The id is the resource name — stable,
+  used by every later command, and **it cannot be reused for ~30 days after a
+  delete** (delete is a soft delete). The display name is free text and can be
+  changed with `agents update`. When a user says "call it sales-bot", use it as
+  the id.
+- **Which chat mode.** Default to stateless `--agent-id` for a single
+  question. Add `--conversation-id` only when follow-ups should see history
+  ("and the month before?"). Use inline `--bq-table` when the user explicitly
+  wants nothing persisted.
+- **Ambiguous time ranges.** "Last month" may mean the previous calendar month
+  or a trailing 30 days, and the answer differs. Pin it down in the question or
+  in `systemInstruction`.
+- **Business definitions.** A rule like "revenue is net of refunds" can go in
+  `--system-instruction`. For term definitions the API also has
+  `glossaryTerms`, and `exampleQueries` for known question/SQL pairs — neither
+  has a CLI flag, so use `raw` with a hand-built `Context` (see `REFERENCE.md`).
+
+## Troubleshooting
+
+| Symptom | Meaning | Fix |
+| --- | --- | --- |
+| `401 UNAUTHENTICATED`, `CREDENTIALS_MISSING` | No token was sent. | `doctor` — discovery found nothing. |
+| `401 UNAUTHENTICATED`, `ACCESS_TOKEN_TYPE_UNSUPPORTED` | A token was sent but is not a usable OAuth token for this API (a placeholder, an API key, the wrong token type). | Check which source `doctor`/`-v` names, and replace it. |
+| `403 PERMISSION_DENIED`, `SERVICE_DISABLED` | The API is not enabled on the project. | `gcloud services enable geminidataanalytics.googleapis.com --project PROJECT` |
+| `403 PERMISSION_DENIED` (other) | The identity lacks `geminidataanalytics.*`, or cannot read the BigQuery table. | Grant the roles; confirm which identity is in use with `-v`. |
+| `404` with an **HTML** body | Wrong path or API version — not a missing resource. | Check the path against `REFERENCE.md`; stay on `v1`. |
+| `404` with a **JSON** `NOT_FOUND` | The resource really is absent. | Check the id; remember `agents list` hides soft-deleted agents. |
+| `409 ALREADY_EXISTS` on create | The id is taken — including by a soft-deleted agent, for ~30 days. | Use a different `--agent-id`. |
+| `connection failed` + TLS text | Python cannot verify the certificate (common on macOS). | The error names the fix; do not disable verification. |
+
+Credentials are discovered, not configured — so when something looks wrong,
+`doctor` is always the first command, and `-v` shows which identity and project
+a given call actually used.
 
 ## Guidance
 

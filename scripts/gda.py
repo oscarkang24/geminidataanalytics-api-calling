@@ -118,6 +118,14 @@ def _metadata_get(path, timeout=2):
         return r.read().decode().strip()
 
 
+def _metadata_absence(e):
+    """Off-cloud this always fails; say so instead of leaking a urllib error."""
+    text = str(e)
+    if "Name or service not known" in text or "Errno -2" in text or "refused" in text:
+        return "not available (not running on GCE / Cloud Run)"
+    return f"not available ({text})"
+
+
 def _token_from_refresh(info):
     """`authorized_user` credentials -> access token."""
     for field in ("client_id", "client_secret", "refresh_token"):
@@ -184,6 +192,23 @@ def _token_from_credentials_file(info):
     raise RuntimeError(f"unsupported credential type {kind!r}")
 
 
+GCLOUD_INSTALL_DIRS = ("/usr/lib/google-cloud-sdk", "/opt/google-cloud-sdk",
+                       "/usr/local/google-cloud-sdk", "/snap/google-cloud-sdk",
+                       "~/google-cloud-sdk", "/usr/local/Caskroom/google-cloud-sdk")
+
+
+def _gcloud_absence():
+    """Distinguish 'installed but not on PATH' from 'not installed at all'.
+
+    The remedies are completely different — one is a PATH export, the other a
+    download — so saying only "not on PATH" sends people the wrong way.
+    """
+    for d in GCLOUD_INSTALL_DIRS:
+        if os.path.isdir(os.path.expanduser(d)):
+            return f"installed at {d} but not on PATH (add its bin/ to $PATH)"
+    return "not installed (https://cloud.google.com/sdk/docs/install)"
+
+
 def _gcloud(args):
     # stdin is closed so a reauth prompt fails fast instead of blocking on a
     # terminal read with its prompt swallowed by the captured pipe.
@@ -204,6 +229,11 @@ def get_token():
     tok = os.environ.get("GDA_ACCESS_TOKEN")
     if tok:
         return tok, "$GDA_ACCESS_TOKEN"
+    # gcloud's own override. Honouring it keeps us consistent with the ecosystem;
+    # naming the source keeps a bad value traceable.
+    tok = os.environ.get("CLOUDSDK_AUTH_ACCESS_TOKEN")
+    if tok:
+        return tok, "$CLOUDSDK_AUTH_ACCESS_TOKEN"
 
     # Setting GOOGLE_APPLICATION_CREDENTIALS names the identity to use. Falling
     # through to a different one would run as the wrong principal, with
@@ -245,7 +275,7 @@ def get_token():
         blob = _metadata_get("instance/service-accounts/default/token")
         return json.loads(blob)["access_token"], f"metadata server ({METADATA_HOST})"
     except Exception as e:
-        tried.append(f"metadata server: {e}")
+        tried.append("metadata server: " + _metadata_absence(e))
 
     for cmd, label in ((["auth", "application-default", "print-access-token"],
                         "gcloud ADC"),
@@ -255,18 +285,31 @@ def get_token():
             if t:
                 return t, f"{label} (`gcloud {' '.join(cmd)}`)"
         except FileNotFoundError:
-            tried.append("gcloud: not on PATH")
+            tried.append("gcloud: " + _gcloud_absence())
             break
         except Exception as e:
             if _is_cert_error(e):
                 raise Unavailable(_connection_error(e))
             tried.append(f"{label}: {e}")
 
-    raise Unavailable(
-        "could not find credentials. Run `gcloud auth application-default "
-        "login`, set $GOOGLE_APPLICATION_CREDENTIALS to a service-account key, "
-        "or pass --access-token / $GDA_ACCESS_TOKEN.\nTried:\n  - "
-        + "\n  - ".join(tried))
+    no_gcloud = any(t.startswith("gcloud: not installed") for t in tried)
+    if no_gcloud:
+        # Leading with `gcloud auth ...` here would hand the user a command
+        # that cannot run on this machine.
+        remedy = ("gcloud is not installed here, so the usual "
+                  "`gcloud auth application-default login` will not work. Either:\n"
+                  "  - set $GOOGLE_APPLICATION_CREDENTIALS to a service-account "
+                  "key file (best for containers and CI; no browser needed), or\n"
+                  "  - export a token from a machine that has gcloud:\n"
+                  "      export GDA_ACCESS_TOKEN=$(gcloud auth "
+                  "application-default print-access-token), or\n"
+                  "  - install the SDK: https://cloud.google.com/sdk/docs/install")
+    else:
+        remedy = ("Run `gcloud auth application-default login`, set "
+                  "$GOOGLE_APPLICATION_CREDENTIALS to a service-account key, "
+                  "or pass --access-token / $GDA_ACCESS_TOKEN.")
+    raise Unavailable("could not find credentials. " + remedy
+                      + "\nTried:\n  - " + "\n  - ".join(tried))
 
 
 def detect_project():
@@ -292,7 +335,7 @@ def detect_project():
     try:
         return _metadata_get("project/project-id"), f"metadata server ({METADATA_HOST})"
     except Exception as e:
-        tried.append(f"metadata server: {e}")
+        tried.append("metadata server: " + _metadata_absence(e))
 
     try:
         proj = _gcloud(["config", "get-value", "project"])
@@ -300,7 +343,7 @@ def detect_project():
             return proj, "`gcloud config get-value project`"
         tried.append("gcloud config: project unset")
     except FileNotFoundError:
-        tried.append("gcloud: not on PATH")
+        tried.append("gcloud: " + _gcloud_absence())
     except Exception as e:
         tried.append(f"gcloud config: {e}")
 
@@ -331,7 +374,7 @@ class Client:
             try:
                 self._token, self._token_source = get_token()
             except Unavailable as e:
-                _die(e)
+                _die(f"{e}\n\nRun `gda.py doctor` for a full check.")
         return self._token
 
     @property
@@ -340,7 +383,7 @@ class Client:
             try:
                 self._project, self._project_source = detect_project()
             except Unavailable as e:
-                _die(e)
+                _die(f"{e}\n\nRun `gda.py doctor` for a full check.")
         return self._project
 
     @property
@@ -736,6 +779,24 @@ def _render_data(data_msg):
 # Doctor
 # ---------------------------------------------------------------------------
 
+def _probe_host(c):
+    """One unauthenticated request, purely to separate auth from network."""
+    url = f"{c.host}/{c.version}/projects/-/locations/global/dataAgents"
+    req = urllib.request.Request(url)
+    try:
+        with _urlopen(req, timeout=min(c.timeout, 30)):
+            return f"[ok]   reachable: {c.host} answered"
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return (f"[ok]   reachable: {c.host} answered {e.code} "
+                    "(expected without credentials) — the network is fine, "
+                    "this is purely an auth problem")
+        return f"[??]   {c.host} answered {e.code} {e.reason}"
+    except Exception as e:
+        return (f"[FAIL] cannot reach {c.host}: {e}\n"
+                "       so this may be a network/proxy problem, not only auth")
+
+
 def doctor(c, args):
     """Report whether the CLI can run with no flags, and what is missing."""
     problems = []
@@ -758,6 +819,10 @@ def doctor(c, args):
             print("[FAIL] project: could not be determined")
             problems.append(str(e))
     if problems:
+        # Report reachability even when discovery failed: "is it auth or is it
+        # the network?" is the first fork, and dying here answered neither.
+        print("[..]   checking host reachability without credentials")
+        print("       " + _probe_host(c))
         _die("\n\n".join(problems))
     print(f"[..]   calling {c.host}/{c.version}/{c.parent}/dataAgents")
     # Any failure here (API disabled, no permission) _dies with the API's own
