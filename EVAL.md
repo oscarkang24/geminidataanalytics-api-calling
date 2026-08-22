@@ -158,9 +158,23 @@ was supposed to be a control for, so any measured improvement is a **lower
 bound**. To get a clean control:
 
 ```bash
-mv ~/.claude/skills/geminidataanalytics /tmp/skill-parked   # before baselines
-mv /tmp/skill-parked ~/.claude/skills/geminidataanalytics   # after
+rm -rf ~/.claude/skills/geminidataanalytics   # before the baseline runs
+# ... run every baseline, and wait for all of them to finish ...
+bash install.sh                                # after
 ```
+
+Delete rather than move: reinstalling is one idempotent command, so there is no
+half-restored state to get wrong. The only rule is to wait for **every**
+baseline run to finish before reinstalling — a reinstall while one is still in
+flight puts the description back into its context and re-contaminates it.
+
+`grade.py` also scores a `baseline is uncontaminated` check, which fails if a
+baseline's reply or transcript echoes wording that exists only in the newer
+skill. Treat that as a backstop, not the control: it can only see what reached
+the saved artifacts. In the first run of this suite a baseline session quoted
+the new gate almost verbatim *in its summary*, which is not persisted, so the
+check passed while the run was in fact contaminated. Deleting the skill is what
+actually prevents it.
 
 **Count only task commands.** Writing `transcript.md` and `reply.md` is eval
 scaffolding; `grade.py` filters those out. Counting them adds the same two

@@ -36,6 +36,26 @@ INVESTIGATION = [
 SCAFFOLD = re.compile(r"(transcript\.md|reply\.md|[\w-]*workspace[^\n]*outputs)", re.I)
 
 
+# Phrases that exist only in the post-gate skill. If a baseline run echoes one,
+# it saw the new wording — usually because the skill was still installed and its
+# description reaches every session. That makes the comparison invalid, and it
+# is easy to miss by eye, so detect it instead of relying on procedure.
+GATE_PHRASES = (
+    "report to the user and stop",
+    "credentials cannot be obtained from inside a session",
+    "do not investigate the environment",
+    "prerequisite, not something to debug",
+)
+
+
+def contamination(run_dir, reply, cmds):
+    """For a baseline run, did the new skill's wording leak in?"""
+    if "old_" not in os.path.basename(run_dir):
+        return None
+    hay = (reply + "\n" + "\n".join(cmds or [])).lower()
+    return [p for p in GATE_PHRASES if p in hay] or None
+
+
 def commands(run_dir):
     path = os.path.join(run_dir, "outputs", "transcript.md")
     if not os.path.exists(path):
@@ -108,6 +128,12 @@ def grade(run_dir):
     add("does not claim the agent was created",
         not re.search(r"(created|i've created|successfully created)\s+(the\s+)?(data\s+)?agent", low),
         reply[:200])
+
+    leaked = contamination(run_dir, reply, cmds)
+    if leaked is not None or "old_" in os.path.basename(run_dir):
+        add("baseline is uncontaminated (did not see the new skill's wording)",
+            not leaked,
+            "echoed: " + "; ".join(leaked) if leaked else "no gate phrasing found")
 
     passed = sum(1 for e in exp if e["passed"])
     return {
