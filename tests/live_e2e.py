@@ -11,7 +11,7 @@ Credentials and the project are discovered the same way the CLI discovers them
 It creates an agent and a conversation, exercises all three chat modes, then
 deletes everything it created (cleanup runs even if a step fails).
 """
-import argparse, json, os, subprocess, sys
+import argparse, json, os, subprocess, sys, time
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI = os.path.join(REPO, "scripts", "gda.py")
@@ -43,8 +43,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--project", help="auto-detected when omitted")
     ap.add_argument("--bq-table", required=True, help="project.dataset.table you can read")
-    ap.add_argument("--agent-id", default="eval-agent")
-    ap.add_argument("--conversation-id", default="eval-conv")
+    # Agent delete is a SOFT delete: the id stays reserved for ~30 days, so a
+    # fixed id would make the second run of this script fail with ALREADY_EXISTS.
+    stamp = str(int(time.time()))
+    ap.add_argument("--agent-id", default="eval-agent-" + stamp)
+    ap.add_argument("--conversation-id", default="eval-conv-" + stamp)
     a = ap.parse_args()
     P, AG, CV = a.project, a.agent_id, a.conversation_id
 

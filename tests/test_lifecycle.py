@@ -55,7 +55,17 @@ print(p.stdout.strip())
 if p.returncode != 0 and p.stderr.strip():
     print(p.stderr.strip()[:500])
 
-ok = p.returncode == 0 and doctor_ok
+print("\n=== tests/run_live.sh end to end (skips its own offline suites) ===")
+slim = dict(env)
+slim["GDA_SKIP_OFFLINE"] = "1"
+r = subprocess.run(["bash", os.path.join(HERE, "run_live.sh"), "auto-project.sales.orders"],
+                   capture_output=True, text=True, env=slim)
+tail = [l for l in r.stdout.splitlines() if l.strip()][-3:]
+print("\n".join(tail) or r.stderr[-300:])
+runner_ok = r.returncode == 0 and "13/13" in r.stdout
+
+ok = p.returncode == 0 and doctor_ok and runner_ok
 print(f"\n{'='*60}\nzero-flag lifecycle: {'PASS' if ok else 'FAIL'}"
-      f"  (doctor={'ok' if doctor_ok else 'FAIL'})")
+      f"  (doctor={'ok' if doctor_ok else 'FAIL'},"
+      f" run_live.sh={'ok' if runner_ok else 'FAIL'})")
 sys.exit(0 if ok else 1)

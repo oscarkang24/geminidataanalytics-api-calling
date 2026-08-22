@@ -76,7 +76,7 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 ## Tests
 
 ```bash
-bash tests/run_all.sh      # 168 checks, no credentials needed
+bash tests/run_all.sh      # 174 checks, no credentials needed
 ```
 
 | Suite | What it checks | Needs |
@@ -87,10 +87,20 @@ bash tests/run_all.sh      # 168 checks, no credentials needed
 | `tests/test_lifecycle.py` | The full lifecycle with **zero flags** against `tests/fake_api.py`, with credentials from a simulated metadata server. Exercises `live_e2e.py` itself. | nothing |
 | `tests/test_live_routes.py` | Each URL the CLI builds resolves to the expected RPC on the **real** API. Unauthenticated calls return 401 naming the resolved method, while a wrong path returns 404 — so this validates routing without credentials. | network |
 | `tests/live_e2e.py` | Full create → chat → converse → update → delete lifecycle (suite B of `EVAL.md`), with cleanup. | real credentials |
+| `tests/run_live.sh` | One command: offline suites → `doctor` → live lifecycle, with fix-it guidance when `doctor` fails. | real credentials |
+
+Against a real project, one command runs everything — offline suites, `doctor`,
+then the live lifecycle. There is no token to generate; credentials are
+discovered automatically:
 
 ```bash
-python3 tests/live_e2e.py --bq-table PROJECT.dataset.orders
+bash tests/run_live.sh PROJECT.dataset.orders          # project auto-detected
+bash tests/run_live.sh PROJECT.dataset.orders MYPROJ   # or name it explicitly
 ```
+
+It creates a data agent and a conversation, exercises all three chat modes, and
+deletes both afterwards. Ids are stamped per run, so it is safe to re-run (agent
+delete is a soft delete, and a fixed id would stay reserved for ~30 days).
 
 ## Using as a Claude Code skill
 

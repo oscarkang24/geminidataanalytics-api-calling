@@ -34,7 +34,8 @@ machine:
 `--access-token` and `--project` override their chain. The project is sent in
 `x-goog-user-project`.
 
-Run `python3 scripts/gda.py doctor` first — it reports which source supplied
+Run `python3 scripts/gda.py doctor` first (or `bash tests/run_live.sh
+PROJECT.dataset.table` to check the whole thing end to end) — it reports which source supplied
 each, then makes a real call to confirm the API is enabled and authorized:
 
 ```bash
