@@ -9,6 +9,7 @@ auth, and echoes the resolved method in error.details[].metadata.method.
 """
 import json, os, re, subprocess, sys
 
+HOST_OVERRIDE = os.environ.get("GDA_HOST")
 CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gda.py")
 P = ["--project", "test-project-does-not-exist"]
 results = []
@@ -16,7 +17,8 @@ results = []
 
 def call(argv):
     env = dict(os.environ, GDA_ACCESS_TOKEN="fake-token-for-route-probe")
-    p = subprocess.run([sys.executable, CLI] + P + argv,
+    extra = ["--host", HOST_OVERRIDE] if HOST_OVERRIDE else []
+    p = subprocess.run([sys.executable, CLI] + P + extra + argv,
                        capture_output=True, text=True, env=env, timeout=90)
     blob = p.stdout + p.stderr
     http = re.search(r"HTTP (\d+)", blob)
@@ -38,10 +40,15 @@ def call(argv):
     method = ""
     for d in err.get("details", []) or []:
         method = (d.get("metadata") or {}).get("method", "") or method
+    first = next((l for l in blob.splitlines() if l.strip()), "")
+    # No HTTP status at all means the request never reached Google: DNS, a
+    # proxy, a firewall, or TLS interception - not a routing problem.
+    unreachable = code is None and "non-JSON error body" not in blob
     return {"code": err.get("code") or code, "status": err.get("status"),
             "method": method, "http": code,
             "msg": (err.get("message") or "")[:80],
-            "non_json": "non-JSON error body" in blob, "raw": blob[:200]}
+            "non_json": "non-JSON error body" in blob,
+            "unreachable": unreachable, "first": first[:200], "raw": blob[:300]}
 
 
 def route(name, argv, expect_rpc):
@@ -52,9 +59,22 @@ def route(name, argv, expect_rpc):
     print(f"[{'PASS' if ok else 'FAIL'}] {name}\n"
           f"        -> HTTP {r['code']} {r['status']}  resolved={r['method'] or '(none)'}")
     if not ok:
-        print(f"        expected 401 + {expect_rpc}; msg={r['msg']}")
+        print(f"        expected 401 + {expect_rpc}; "
+              + (f"cli said: {r['first']}" if r["unreachable"] else f"msg={r['msg']}"))
     return r
 
+
+# Preflight. These probes need network egress to googleapis.com (no credentials).
+# Without it every check would fail and look like a routing regression, so skip.
+_pre = call(["agents", "list"])
+if _pre["unreachable"]:
+    print("SKIPPED: cannot reach geminidataanalytics.googleapis.com.\n"
+          f"  the CLI reported: {_pre['first']}\n"
+          "  These probes need outbound HTTPS to googleapis.com (but no\n"
+          "  credentials). Everything else in the suite runs offline, and the\n"
+          "  live lifecycle is unaffected - run it with:\n"
+          "      GDA_SKIP_OFFLINE=1 bash tests/run_live.sh PROJECT.dataset.table")
+    sys.exit(3)   # 3 = skipped, distinct from 1 = real failures
 
 print("=== DataAgentService routes (v1 GA) ===")
 route("agents list        -> ListDataAgents", ["agents", "list"], "ListDataAgents")

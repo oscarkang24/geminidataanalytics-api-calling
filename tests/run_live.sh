@@ -25,7 +25,12 @@ HOST_FLAG=()
 
 if [ "${GDA_SKIP_OFFLINE:-}" != "1" ]; then
   echo "=============== 1/3  offline suites ==============="
-  bash tests/run_all.sh || { echo "offline suites failed — stopping" >&2; exit 1; }
+  if ! bash tests/run_all.sh; then
+    echo >&2
+    echo "offline suites reported a failure — stopping before touching your" >&2
+    echo "project. To run the live lifecycle anyway: GDA_SKIP_OFFLINE=1 $0 $*" >&2
+    exit 1
+  fi
 fi
 
 echo

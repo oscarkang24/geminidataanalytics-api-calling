@@ -85,7 +85,7 @@ bash tests/run_all.sh      # 174 checks, no credentials needed
 | `tests/test_docs.py` | Every command shown in `SKILL.md` and `README.md` actually parses and runs. | nothing |
 | `tests/test_auth.py` | Every credential and project source, against a mock OAuth endpoint, a mock metadata server, a real RSA service-account key, and a stub `gcloud` — plus precedence and failure modes. | nothing |
 | `tests/test_lifecycle.py` | The full lifecycle with **zero flags** against `tests/fake_api.py`, with credentials from a simulated metadata server. Exercises `live_e2e.py` itself. | nothing |
-| `tests/test_live_routes.py` | Each URL the CLI builds resolves to the expected RPC on the **real** API. Unauthenticated calls return 401 naming the resolved method, while a wrong path returns 404 — so this validates routing without credentials. | network |
+| `tests/test_live_routes.py` | Each URL the CLI builds resolves to the expected RPC on the **real** API. Unauthenticated calls return 401 naming the resolved method, while a wrong path returns 404 — so this validates routing without credentials. Skips itself (exit 3) when `googleapis.com` is unreachable, rather than reporting phantom routing failures. | network egress, no credentials |
 | `tests/live_e2e.py` | Full create → chat → converse → update → delete lifecycle (suite B of `EVAL.md`), with cleanup. | real credentials |
 | `tests/run_live.sh` | One command: offline suites → `doctor` → live lifecycle, with fix-it guidance when `doctor` fails. | real credentials |
 
@@ -96,6 +96,9 @@ discovered automatically:
 ```bash
 bash tests/run_live.sh PROJECT.dataset.orders          # project auto-detected
 bash tests/run_live.sh PROJECT.dataset.orders MYPROJ   # or name it explicitly
+
+# Skip the offline suites and go straight to the live lifecycle:
+GDA_SKIP_OFFLINE=1 bash tests/run_live.sh PROJECT.dataset.orders
 ```
 
 It creates a data agent and a conversation, exercises all three chat modes, and
