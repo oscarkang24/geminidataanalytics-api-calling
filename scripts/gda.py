@@ -24,6 +24,7 @@ import argparse
 import base64
 import json
 import os
+import http.client
 import socket
 import ssl
 import subprocess
@@ -46,6 +47,27 @@ PROJECT_ENV_VARS = ("GDA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT",
 # Generous, because :chat generates SQL and runs it against BigQuery — but never
 # unbounded: without this a stalled connection hangs the CLI forever.
 DEFAULT_TIMEOUT = 300
+
+
+def _timeout_arg(value):
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"must be a number of seconds, got {value!r}")
+    if seconds <= 0:
+        raise argparse.ArgumentTypeError(f"must be greater than 0, got {value!r}")
+    return seconds
+
+
+def _env_timeout():
+    """$GDA_TIMEOUT, validated — a bad value must not crash even `--help`."""
+    raw = os.environ.get("GDA_TIMEOUT")
+    if raw is None or raw == "":
+        return DEFAULT_TIMEOUT
+    try:
+        return _timeout_arg(raw)
+    except argparse.ArgumentTypeError as e:
+        _die(f"$GDA_TIMEOUT {e}")
 
 
 def _die(msg):
@@ -107,7 +129,10 @@ def _token_from_refresh(info):
         "refresh_token": info["refresh_token"],
         "grant_type": "refresh_token",
     })
-    return r["access_token"]
+    tok = r.get("access_token")
+    if not tok:
+        raise RuntimeError(f"token endpoint returned no access_token: {str(r)[:200]}")
+    return tok
 
 
 def _sign_rs256(private_key_pem, message):
@@ -118,7 +143,7 @@ def _sign_rs256(private_key_pem, message):
         with os.fdopen(fd, "w") as f:
             f.write(private_key_pem)
         p = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key],
-                           input=message, capture_output=True)
+                           input=message, capture_output=True, timeout=30)
         if p.returncode != 0:
             raise RuntimeError("openssl: " + p.stderr.decode().strip()[:200])
         return p.stdout
@@ -144,7 +169,10 @@ def _token_from_service_account(info):
     r = _post_form(uri, {
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         "assertion": (signing_input + b"." + sig).decode()})
-    return r["access_token"]
+    tok = r.get("access_token")
+    if not tok:
+        raise RuntimeError(f"token endpoint returned no access_token: {str(r)[:200]}")
+    return tok
 
 
 def _token_from_credentials_file(info):
@@ -157,7 +185,13 @@ def _token_from_credentials_file(info):
 
 
 def _gcloud(args):
-    p = subprocess.run(["gcloud"] + args, capture_output=True, text=True)
+    # stdin is closed so a reauth prompt fails fast instead of blocking on a
+    # terminal read with its prompt swallowed by the captured pipe.
+    try:
+        p = subprocess.run(["gcloud"] + args, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=30)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("gcloud timed out after 30s (is it waiting for input?)")
     if p.returncode != 0:
         raise RuntimeError(p.stderr.strip().splitlines()[-1][:200]
                            if p.stderr.strip() else "gcloud failed")
@@ -186,6 +220,8 @@ def get_token():
             return (_token_from_credentials_file(info),
                     f"$GOOGLE_APPLICATION_CREDENTIALS ({sa})")
         except Exception as e:
+            if _is_cert_error(e):
+                raise Unavailable(_connection_error(e))
             raise Unavailable(
                 f"$GOOGLE_APPLICATION_CREDENTIALS is set to {sa} but no token "
                 f"could be obtained from it:\n  {e}\nFix or unset it rather "
@@ -199,6 +235,10 @@ def get_token():
         try:
             return _token_from_credentials_file(info), f"ADC file ({path})"
         except Exception as e:
+            # A trust failure breaks every source, and "could not find
+            # credentials" would send the user to fix perfectly good ADC.
+            if _is_cert_error(e):
+                raise Unavailable(_connection_error(e))
             tried.append(f"ADC file: {e}")
 
     try:
@@ -218,6 +258,8 @@ def get_token():
             tried.append("gcloud: not on PATH")
             break
         except Exception as e:
+            if _is_cert_error(e):
+                raise Unavailable(_connection_error(e))
             tried.append(f"{label}: {e}")
 
     raise Unavailable(
@@ -337,15 +379,20 @@ class Client:
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with _urlopen(req, timeout=self.timeout) as resp:
-                raw = resp.read().decode("utf-8")
+                raw = resp.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")
             _die(f"HTTP {e.code} {e.reason}\n{_error_detail(detail)}")
-        except socket.timeout:
+        except TimeoutError:
             _die(f"request timed out after {self.timeout}s. Raise it with "
                  "--timeout SECONDS (or $GDA_TIMEOUT) if the query is slow.")
         except urllib.error.URLError as e:
             _die(_connection_error(e))
+        except (OSError, http.client.HTTPException) as e:
+            # urllib only wraps errors raised while sending; a reset or a
+            # truncated body during getresponse()/read() arrives raw. A long
+            # :chat held open through a proxy is exactly when that happens.
+            _die(f"connection failed mid-request: {type(e).__name__}: {e}")
         if not raw:
             return {}
         try:
@@ -410,6 +457,9 @@ def _connection_error(e):
     reason = e.reason
     msg = f"connection failed: {reason}"
     text = str(reason)
+    if isinstance(reason, TimeoutError) or "timed out" in text.lower():
+        return (msg + "\n\nRaise the deadline with --timeout SECONDS "
+                "(or $GDA_TIMEOUT) if the endpoint is simply slow.")
     if isinstance(reason, ssl.SSLError) or "CERTIFICATE_VERIFY" in text.upper():
         msg += (
             "\n\nThis is a TLS trust problem in Python, not a network outage:"
@@ -638,6 +688,8 @@ def _final_answer(messages):
         return json.dumps(messages, indent=2)
     blocks = []
     for m in messages:
+        if not isinstance(m, dict):
+            continue
         sysmsg = m.get("systemMessage")
         if not isinstance(sysmsg, dict):
             continue
@@ -662,8 +714,11 @@ def _render_data(data_msg):
     """
     if not isinstance(data_msg, dict):
         return None
-    result = data_msg.get("result") or {}
-    fields = (result.get("schema") or {}).get("fields") or []
+    result = data_msg.get("result")
+    result = result if isinstance(result, dict) else {}
+    schema = result.get("schema")
+    fields = (schema.get("fields") or []) if isinstance(schema, dict) else []
+    fields = [f for f in fields if isinstance(f, dict)]
     rows = result.get("data")
     if fields and isinstance(rows, list):
         headers = [f.get("name", "") for f in fields]
@@ -726,7 +781,10 @@ def raw(c, args):
     body = None
     if args.body:
         raw_body = sys.stdin.read() if args.body == "-" else args.body
-        body = json.loads(tmpl(raw_body))
+        try:
+            body = json.loads(tmpl(raw_body))
+        except ValueError as e:
+            _die(f"--body is not valid JSON: {e}")
     path = tmpl(args.path).lstrip("/")
     out(c.request(args.method.upper(), path, body=body))
 
@@ -748,8 +806,7 @@ def build_parser():
     p.add_argument("--access-token",
                    help="OAuth2 access token, skipping credential discovery; "
                         "falls back to $GDA_ACCESS_TOKEN")
-    p.add_argument("--timeout", type=float,
-                   default=float(os.environ.get("GDA_TIMEOUT") or DEFAULT_TIMEOUT),
+    p.add_argument("--timeout", type=_timeout_arg, default=_env_timeout(),
                    help=f"per-request timeout in seconds (default {DEFAULT_TIMEOUT}); "
                         "also settable via $GDA_TIMEOUT")
     p.add_argument("-v", "--verbose", action="store_true",
@@ -866,5 +923,21 @@ def main(argv=None):
     args.func(c, args)
 
 
+def _run():
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        sys.exit(130)
+    except BrokenPipeError:
+        # Standard CPython dance: a closed pipe (`| head`, `| less` then q)
+        # would otherwise print "BrokenPipeError ignored" at shutdown.
+        try:
+            sys.stdout.close()
+        finally:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            sys.exit(0)
+
+
 if __name__ == "__main__":
-    main()
+    _run()

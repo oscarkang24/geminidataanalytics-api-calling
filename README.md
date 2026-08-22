@@ -76,7 +76,7 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 ## Tests
 
 ```bash
-bash tests/run_all.sh      # 197 checks, no credentials needed
+bash tests/run_all.sh      # 218 checks, no credentials needed
 ```
 
 The harness is hermetic: every run starts from an environment with ambient

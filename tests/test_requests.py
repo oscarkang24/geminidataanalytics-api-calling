@@ -166,7 +166,9 @@ check("raw: --body - reads stdin, {project}/{location} expand",
       c and c["body"] == {"project": "myproj", "loc": "global"}, str(c and c["body"]))
 
 p, c = run(P + ["raw", "POST", "{parent}:x", "--body", "{not json"])
-check("raw: invalid JSON body fails loudly", p.returncode != 0 and c is None, (p.stderr or "")[-200:])
+check("raw: invalid JSON body fails loudly, without a traceback",
+      p.returncode != 0 and c is None and "Traceback" not in p.stderr
+      and "not valid JSON" in p.stderr, (p.stderr or "")[-200:])
 
 print("\n--- Global flags ---")
 p, c = run(P + ["--location", "us-central1", "--version", "v1beta", "agents", "list"])
@@ -270,6 +272,31 @@ p, _ = run(["--project", "p", "--help"])
 check("--help says v1 is the default", "v1 (GA, default)" in p.stdout and "v1beta (default)" not in p.stdout,
       [l for l in p.stdout.splitlines() if "--version" in l])
 
+print("\n--- clean errors, never tracebacks ---")
+NOTB = lambda pr: "Traceback" not in pr.stderr
+p_, c_ = run(["--project", "p", "agents", "list"], env_extra={"GDA_TIMEOUT": "5m"})
+check("bad $GDA_TIMEOUT -> clean error", p_.returncode == 1 and NOTB(p_)
+      and "must be a number of seconds" in p_.stderr, p_.stderr[:200])
+p_, c_ = run(["--project", "p", "--timeout", "-5", "agents", "list"])
+check("negative --timeout -> clean argparse error", p_.returncode == 2 and NOTB(p_), p_.stderr[:200])
+p_, c_ = run(["--project", "p", "--timeout", "abc", "agents", "list"])
+check("non-numeric --timeout -> clean argparse error", p_.returncode == 2 and NOTB(p_), p_.stderr[:200])
+p_, c_ = run(["--project", "p", "raw", "POST", "{parent}:x", "--body", "{bad"])
+check("invalid raw --body -> clean error, no traceback",
+      p_.returncode == 1 and NOTB(p_) and "not valid JSON" in p_.stderr, p_.stderr[:200])
+p_, c_ = run(["--project", "p", "agents", "list"], env_extra={"GDA_TIMEOUT": ""})
+check("empty $GDA_TIMEOUT falls back to the default", p_.returncode == 0 and NOTB(p_), p_.stderr[:200])
+
+print("\n--- surprising response shapes never traceback ---")
+for label, payload in (("list of strings", ["hello", "world"]),
+                       ("data result is a list", [{"systemMessage": {"data": {"result": [1, 2]}}}]),
+                       ("fields are not dicts", [{"systemMessage": {"data": {"result": {
+                           "schema": {"fields": ["a", "b"]}, "data": [{"a": 1}]}}}}]),
+                       ("nulls throughout", [None, {"systemMessage": None}])):
+    p_, _ = run(["--project", "p", "chat", "--agent-id", "a", "--message", "q", "--answer-only"],
+                body=payload)
+    check(f"--answer-only survives: {label}", NOTB(p_), p_.stderr[-200:])
+
 print("\n--- harness hermeticity ---")
 import harness as _h
 _env = _h.hermetic_env()
@@ -284,9 +311,12 @@ check("ADC config points at an empty dir",
       _env["CLOUDSDK_CONFIG"])
 check("metadata server cannot answer",
       _env["GCE_METADATA_HOST"].startswith("127.0.0.1:"), _env["GCE_METADATA_HOST"])
-check("gcloud is not reachable on PATH",
-      not any(os.path.exists(os.path.join(d, "gcloud"))
-              for d in _env["PATH"].split(os.pathsep) if d), _env["PATH"][:200])
+_first = _env["PATH"].split(os.pathsep)[0]
+check("gcloud is shadowed by a failing shim",
+      os.path.exists(os.path.join(_first, "gcloud")) and "no-gcloud" in _first, _first)
+check("shadowing keeps openssl available (the CLI signs JWTs with it)",
+      any(os.path.exists(os.path.join(d, "openssl"))
+          for d in _env["PATH"].split(os.pathsep) if d), _env["PATH"][:200])
 # The decisive one: a real ambient credential must not leak into a run.
 p_, c_ = run(["--project", "p", "agents", "list"],
              env_extra={"GDA_ACCESS_TOKEN": ""})

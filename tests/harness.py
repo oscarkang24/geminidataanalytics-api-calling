@@ -59,17 +59,27 @@ results = []
 _EMPTY_CFG = tempfile.mkdtemp(prefix="gda-empty-cfg-")
 _SCRUB = ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "GDA_PROJECT",
           "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT",
-          "CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_CLOUD_QUOTA_PROJECT")
+          "CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_CLOUD_QUOTA_PROJECT",
+          "GDA_TIMEOUT")
 
 
-def _path_without_gcloud():
-    """PATH minus any directory holding a gcloud executable."""
-    keep = []
-    for d in os.environ.get("PATH", "").split(os.pathsep):
-        if d and os.path.exists(os.path.join(d, "gcloud")):
-            continue
-        keep.append(d)
-    return os.pathsep.join(keep)
+def _path_shadowing_gcloud():
+    """PATH with a failing `gcloud` shim in front.
+
+    Dropping every directory that contains gcloud would also drop whatever else
+    lives there — openssl among them, which the CLI needs to sign a JWT, and
+    which shares /usr/bin or /opt/homebrew/bin with gcloud on many machines.
+    Shadowing it keeps the rest of PATH intact.
+    """
+    shim_dir = tempfile.mkdtemp(prefix="gda-no-gcloud-")
+    shim = os.path.join(shim_dir, "gcloud")
+    with open(shim, "w") as f:
+        f.write("#!/bin/sh\necho 'gcloud: not configured (test shim)' >&2\nexit 1\n")
+    os.chmod(shim, 0o755)
+    return shim_dir + os.pathsep + os.environ.get("PATH", "")
+
+
+_NO_GCLOUD_PATH = _path_shadowing_gcloud()
 
 
 def hermetic_env():
@@ -78,7 +88,7 @@ def hermetic_env():
         env.pop(var, None)
     env["CLOUDSDK_CONFIG"] = _EMPTY_CFG          # no ADC file
     env["GCE_METADATA_HOST"] = "127.0.0.1:1"     # refused instantly, never resolves
-    env["PATH"] = _path_without_gcloud()         # no gcloud CLI fallback
+    env["PATH"] = _NO_GCLOUD_PATH                # gcloud shadowed, not removed
     env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
     env["no_proxy"] = "127.0.0.1,localhost"; env["NO_PROXY"] = env["no_proxy"]
     return env

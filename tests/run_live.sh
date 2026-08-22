@@ -9,6 +9,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# On a Mac without the Xcode command line tools, /usr/bin/python3 is a stub
+# that opens an installer dialog and exits non-zero. Fail with a reason.
+PY="${PYTHON:-python3}"
+command -v "$PY" >/dev/null 2>&1 || {
+  echo "error: '$PY' not found. Install Python 3 (macOS: xcode-select --install)," >&2
+  echo "       or set \$PYTHON to your interpreter." >&2
+  exit 2
+}
+
 BQ_TABLE="${1:-}"
 PROJECT="${2:-}"
 if [ -z "$BQ_TABLE" ]; then
@@ -38,7 +47,7 @@ fi
 
 echo
 echo "=============== 2/3  doctor ==============="
-if ! python3 scripts/gda.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} ${HOST_FLAG[@]+"${HOST_FLAG[@]}"} doctor; then
+if ! "$PY" scripts/gda.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} ${HOST_FLAG[@]+"${HOST_FLAG[@]}"} doctor; then
   cat >&2 <<'HINT'
 
 doctor failed. The usual fixes:
@@ -53,4 +62,4 @@ fi
 
 echo
 echo "=============== 3/3  live lifecycle ==============="
-python3 tests/live_e2e.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} --bq-table "$BQ_TABLE"
+"$PY" tests/live_e2e.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} --bq-table "$BQ_TABLE"

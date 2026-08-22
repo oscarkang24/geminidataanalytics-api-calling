@@ -94,6 +94,39 @@ except urllib.error.URLError as e:
 check("_is_cert_error ignores unrelated failures",
       not gda._is_cert_error(urllib.error.URLError("Name or service not known")), "")
 
+print("\n--- TLS guidance survives credential discovery ---")
+# The first network call the CLI makes is a token exchange. If that fails on
+# trust, "could not find credentials" would send a user with perfectly good
+# ADC off to re-run gcloud login, which cannot fix it.
+class _Tok(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        b = json.dumps({"access_token": "should-never-be-reached"}).encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b)))
+        self.end_headers(); self.wfile.write(b)
+
+
+tok_srv = HTTPServer(("127.0.0.1", 0), _Tok)
+_c = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); _c.load_cert_chain(crt, key)
+tok_srv.socket = _c.wrap_socket(tok_srv.socket, server_side=True)
+threading.Thread(target=tok_srv.serve_forever, daemon=True).start()
+
+adc_dir = os.path.join(TMP, "adc"); os.makedirs(adc_dir, exist_ok=True)
+with open(os.path.join(adc_dir, "application_default_credentials.json"), "w") as f:
+    json.dump({"type": "authorized_user", "client_id": "c", "client_secret": "s",
+               "refresh_token": "r", "quota_project_id": "p",
+               "token_uri": f"https://localhost:{tok_srv.server_address[1]}/token"}, f)
+
+p, c = run(["--project", "p", "agents", "list"],
+           env_extra={"GDA_ACCESS_TOKEN": "", "CLOUDSDK_CONFIG": adc_dir,
+                      "SSL_CERT_FILE": ""})
+check("a trust failure during token refresh shows the TLS guidance",
+      "TLS trust problem in Python" in p.stderr, p.stderr[-300:])
+check("...and does not claim credentials are missing",
+      "could not find credentials" not in p.stderr, p.stderr[-300:])
+
 print("\n--- no silent identity fallback ---")
 bad = os.path.join(TMP, "not-json.json")
 open(bad, "w").write("this is not json")
