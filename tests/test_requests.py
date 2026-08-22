@@ -270,6 +270,23 @@ p, _ = run(["--project", "p", "--help"])
 check("--help says v1 is the default", "v1 (GA, default)" in p.stdout and "v1beta (default)" not in p.stdout,
       [l for l in p.stdout.splitlines() if "--version" in l])
 
+print("\n--- connection-error diagnosis ---")
+import ssl as _ssl, urllib.error as _ue, importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("gda", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gda.py"))
+_gda = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_gda)
+_tls = _gda._connection_error(_ue.URLError(_ssl.SSLCertVerificationError(
+    1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")))
+check("TLS failure is named as a Python trust problem, not an outage",
+      "TLS trust problem in Python" in _tls and "Install Certificates" in _tls
+      and "SSL_CERT_FILE" in _tls, _tls[:200])
+check("TLS advice never suggests disabling verification",
+      "Do not disable certificate verification" in _tls
+      and "verify=False" not in _tls and "_create_unverified" not in _tls, _tls[:200])
+_dns = _gda._connection_error(_ue.URLError("Name or service not known"))
+check("non-TLS connection errors stay terse",
+      "TLS trust problem" not in _dns and "Name or service not known" in _dns, _dns)
+
 print("\n--- doctor ---")
 p, c = run(["doctor"], body={"dataAgents": [{"name": "a"}, {"name": "b"}]},
            env_extra={"GOOGLE_CLOUD_PROJECT": "doc-project"})

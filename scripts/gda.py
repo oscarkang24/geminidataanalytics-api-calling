@@ -24,6 +24,7 @@ import argparse
 import base64
 import json
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -327,13 +328,38 @@ class Client:
             detail = e.read().decode("utf-8", "replace")
             _die(f"HTTP {e.code} {e.reason}\n{_error_detail(detail)}")
         except urllib.error.URLError as e:
-            _die(f"connection failed: {e.reason}")
+            _die(_connection_error(e))
         if not raw:
             return {}
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
             return raw
+
+
+def _connection_error(e):
+    """Explain a failed connection, singling out Python-side TLS trust.
+
+    A certificate failure here while `curl` to the same URL succeeds means
+    Python is not reading the trust store curl uses — a setup problem, not an
+    outage — so say that rather than leaving it as "connection failed".
+    """
+    reason = e.reason
+    msg = f"connection failed: {reason}"
+    text = str(reason)
+    if isinstance(reason, ssl.SSLError) or "CERTIFICATE_VERIFY" in text.upper():
+        msg += (
+            "\n\nThis is a TLS trust problem in Python, not a network outage:"
+            "\ncurl can succeed on the same URL because it uses a different"
+            "\ntrust store. Fixes, in order of likelihood:"
+            "\n  - macOS python.org build: run"
+            "\n      '/Applications/Python 3.x/Install Certificates.command'"
+            "\n  - corporate TLS proxy: point Python at your CA bundle, e.g."
+            "\n      export SSL_CERT_FILE=/path/to/corporate-ca.pem"
+            "\n  - or install certifi and set SSL_CERT_FILE to"
+            "\n      python3 -c 'import certifi; print(certifi.where())'"
+            "\nDo not disable certificate verification.")
+    return msg
 
 
 def _error_detail(body):
