@@ -177,8 +177,11 @@ check("-v echoes METHOD + URL to stderr", "# POST" in p.stderr and ":createSync?
 check("-v echoes body to stderr", "# body:" in p.stderr and "tableReferences" in p.stderr, repr(p.stderr))
 check("-v keeps stdout clean JSON", json.loads(p.stdout) == {"ok": True}, repr(p.stdout))
 
-p, c = run(["agents", "list"])
-check("--project is required", p.returncode == 2 and "--project" in p.stderr, p.stderr.strip()[:120])
+p, c = run(["agents", "list"], env_extra={v: "" for v in
+           ("GDA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT")})
+check("--project optional: falls back to detection, errors clearly if none found",
+      p.returncode == 1 and c is None and "could not determine the project" in p.stderr,
+      p.stderr.strip()[:200])
 
 p, c = run(P + ["--access-token", "flag-token", "agents", "list"])
 check("--access-token beats $GDA_ACCESS_TOKEN", c and c["headers"]["authorization"] == "Bearer flag-token", str(c and c["headers"].get("authorization")))
@@ -266,6 +269,22 @@ print("\n--- Fix 5: --help version text ---")
 p, _ = run(["--project", "p", "--help"])
 check("--help says v1 is the default", "v1 (GA, default)" in p.stdout and "v1beta (default)" not in p.stdout,
       [l for l in p.stdout.splitlines() if "--version" in l])
+
+print("\n--- doctor ---")
+p, c = run(["doctor"], body={"dataAgents": [{"name": "a"}, {"name": "b"}]},
+           env_extra={"GOOGLE_CLOUD_PROJECT": "doc-project"})
+check("doctor reports sources and agent count",
+      p.returncode == 0 and "credentials: $GDA_ACCESS_TOKEN" in p.stdout
+      and "doc-project (from $GOOGLE_CLOUD_PROJECT)" in p.stdout
+      and "2 data agent(s) visible" in p.stdout, p.stdout[-300:])
+p, c = run(["doctor"], body=[], env_extra={"GOOGLE_CLOUD_PROJECT": "doc-project"})
+check("doctor survives an unexpected response shape (no traceback)",
+      p.returncode == 0 and "Traceback" not in p.stderr, (p.stderr or p.stdout)[-300:])
+p, c = run(["doctor"], status=403, env_extra={"GOOGLE_CLOUD_PROJECT": "doc-project"},
+           body={"error": {"code": 403, "status": "SERVICE_DISABLED",
+                           "message": "geminidataanalytics.googleapis.com is not enabled"}})
+check("doctor surfaces the API's own diagnosis",
+      p.returncode == 1 and "SERVICE_DISABLED" in p.stderr, p.stderr[-200:])
 
 print('\n--- Mid-stream error detection ---')
 PARTIAL = [{"systemMessage": {"text": {"parts": ["Sales were 100"], "textType": "FINAL_RESPONSE"}}},

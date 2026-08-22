@@ -30,7 +30,10 @@ for doc in ("SKILL.md", "README.md"):
                  .replace("PROJECT.dataset.orders", "myproj.dataset.orders")
                  .replace("{parent}", "{parent}") for a in argv]
         stdin = "{}" if "-" in argv and "--body" in argv else None
-        p, c = run(argv, stdin=stdin, body=[])
+        # Examples that omit --project rely on project auto-detection, so give
+        # the run a detectable project the way a configured machine would.
+        p, c = run(argv, stdin=stdin, body=[],
+                   env_extra={"GOOGLE_CLOUD_PROJECT": "doc-project"})
         ok = p.returncode == 0
         check(cmd[:96] + ("..." if len(cmd) > 96 else ""), ok,
               f"exit={p.returncode} stderr={p.stderr.strip()[:160]}")

@@ -3,8 +3,10 @@
 
 Needs real credentials, so it is NOT part of the default run. Usage:
 
-    export GDA_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
-    python3 tests/live_e2e.py --project MYPROJ --bq-table MYPROJ.dataset.orders
+    python3 tests/live_e2e.py --bq-table MYPROJ.dataset.orders
+
+Credentials and the project are discovered the same way the CLI discovers them
+(`python3 scripts/gda.py doctor` checks that); pass --project to override.
 
 It creates an agent and a conversation, exercises all three chat modes, then
 deletes everything it created (cleanup runs even if a step fails).
@@ -17,7 +19,12 @@ results = []
 
 
 def gda(args, project, expect_ok=True):
-    cmd = [sys.executable, CLI, "--project", project] + args
+    cmd = [sys.executable, CLI]
+    if project:
+        cmd += ["--project", project]
+    if os.environ.get("GDA_HOST"):
+        cmd += ["--host", os.environ["GDA_HOST"]]
+    cmd += args
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if p.returncode != 0 and expect_ok:
         print("    ! " + (p.stderr.strip().splitlines() or ["(no stderr)"])[0][:200])
@@ -34,16 +41,12 @@ def step(name, ok, detail=""):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--project", required=True)
+    ap.add_argument("--project", help="auto-detected when omitted")
     ap.add_argument("--bq-table", required=True, help="project.dataset.table you can read")
     ap.add_argument("--agent-id", default="eval-agent")
     ap.add_argument("--conversation-id", default="eval-conv")
     a = ap.parse_args()
     P, AG, CV = a.project, a.agent_id, a.conversation_id
-
-    if not (os.environ.get("GDA_ACCESS_TOKEN") or subprocess.run(
-            ["which", "gcloud"], capture_output=True).returncode == 0):
-        sys.exit("need $GDA_ACCESS_TOKEN or gcloud on PATH")
 
     try:
         # B1 create
@@ -91,8 +94,9 @@ def main():
         # B10 GA-surface check
         p, _ = gda(["-v", "chat", "--agent-id", AG, "--message", "hi", "--answer-only"], P)
         line = next((l for l in p.stderr.splitlines() if l.startswith("# POST")), "")
-        step("B10 uses GA v1 + :chat on the public host",
-             "https://geminidataanalytics.googleapis.com/v1/" in line and line.endswith(":chat"), line or p.stderr[:200])
+        expect_host = os.environ.get("GDA_HOST", "https://geminidataanalytics.googleapis.com")
+        step("B10 uses GA v1 + :chat on the expected host",
+             f"{expect_host}/v1/" in line and line.endswith(":chat"), line or p.stderr[:200])
     finally:
         print("\n--- cleanup ---")
         p, _ = gda(["conversations", "delete", "--conversation-id", CV], P, expect_ok=False)

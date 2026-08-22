@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Full lifecycle with ZERO flags, against tests/fake_api.py.
+
+Credentials and project come from a simulated GCE metadata server, so this is
+the exact zero-touch path a configured machine takes. Proves both the CLI
+lifecycle and tests/live_e2e.py itself, without real credentials.
+"""
+import json, os, subprocess, sys, threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import fake_api  # noqa: E402
+
+
+class Meta(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if self.headers.get("Metadata-Flavor") != "Google":
+            self.send_response(403); self.end_headers(); return
+        body = (json.dumps({"access_token": "metadata-token", "expires_in": 3599})
+                if self.path.endswith("/token") else "auto-project")
+        b = body.encode()
+        self.send_response(200); self.send_header("Content-Length", str(len(b)))
+        self.end_headers(); self.wfile.write(b)
+
+
+meta = HTTPServer(("127.0.0.1", 0), Meta)
+threading.Thread(target=meta.serve_forever, daemon=True).start()
+_, api_url = fake_api.start()
+
+env = dict(os.environ)
+for v in ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "GDA_PROJECT",
+          "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"):
+    env.pop(v, None)
+env["GCE_METADATA_HOST"] = f"127.0.0.1:{meta.server_address[1]}"
+env["CLOUDSDK_CONFIG"] = os.path.join(HERE, "_no_such_cfg")
+env["GDA_HOST"] = api_url
+env["no_proxy"] = env["NO_PROXY"] = "127.0.0.1,localhost"
+env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
+
+print("=== doctor (no flags) ===")
+d = subprocess.run([sys.executable, os.path.join(HERE, "..", "scripts", "gda.py"),
+                    "--host", api_url, "doctor"], capture_output=True, text=True, env=env)
+print(d.stdout.strip() or d.stderr.strip())
+doctor_ok = d.returncode == 0 and "Ready: no flags needed." in d.stdout
+
+print("\n=== full lifecycle (no --project, no token flag) ===")
+p = subprocess.run([sys.executable, os.path.join(HERE, "live_e2e.py"),
+                    "--bq-table", "auto-project.sales.orders"],
+                   capture_output=True, text=True, env=env)
+print(p.stdout.strip())
+if p.returncode != 0 and p.stderr.strip():
+    print(p.stderr.strip()[:500])
+
+ok = p.returncode == 0 and doctor_ok
+print(f"\n{'='*60}\nzero-flag lifecycle: {'PASS' if ok else 'FAIL'}"
+      f"  (doctor={'ok' if doctor_ok else 'FAIL'})")
+sys.exit(0 if ok else 1)

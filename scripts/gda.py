@@ -5,19 +5,29 @@ Talks to https://geminidataanalytics.googleapis.com using Application Default
 Credentials. Covers full CRUD over Data Agents and Conversations, plus the
 stateful and stateless Chat surfaces.
 
-Auth: by default an ADC access token is fetched via
-`gcloud auth application-default print-access-token`. Override it with
-`--access-token` or the `$GDA_ACCESS_TOKEN` env var. The billing/quota project
-is sent in the `x-goog-user-project` header.
+Auth and project are discovered automatically, in the same order the Google
+client libraries use, so no flags are needed on a normally configured machine:
 
-No third-party dependencies (urllib only).
+  token    $GDA_ACCESS_TOKEN -> $GOOGLE_APPLICATION_CREDENTIALS service account
+           -> gcloud ADC file -> GCE/Cloud Run metadata server -> gcloud CLI
+  project  --project -> $GDA_PROJECT / $GOOGLE_CLOUD_PROJECT / $GCLOUD_PROJECT /
+           $CLOUDSDK_CORE_PROJECT -> ADC quota project -> service-account
+           project -> metadata server -> `gcloud config get-value project`
+
+`--access-token` and `--project` override the corresponding chain. `-v` reports
+which source each came from. The project is sent in `x-goog-user-project`.
+
+No third-party dependencies (urllib only; RS256 signing shells out to openssl).
 """
 
 import argparse
+import base64
 import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -25,6 +35,12 @@ import urllib.request
 DEFAULT_HOST = "https://geminidataanalytics.googleapis.com"
 DEFAULT_VERSION = "v1"  # GA. Use v1beta for preview-only features (e.g. queryData).
 DEFAULT_LOCATION = "global"
+OAUTH_TOKEN_URI = "https://oauth2.googleapis.com/token"
+SCOPE = "https://www.googleapis.com/auth/cloud-platform"
+# GCE_METADATA_HOST is the standard override honoured by Google's own libraries.
+METADATA_HOST = os.environ.get("GCE_METADATA_HOST", "metadata.google.internal")
+PROJECT_ENV_VARS = ("GDA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT",
+                    "CLOUDSDK_CORE_PROJECT")
 
 
 def _die(msg):
@@ -32,39 +48,243 @@ def _die(msg):
     sys.exit(1)
 
 
-def get_token():
+class Unavailable(Exception):
+    """No credential, or no project, could be discovered."""
+
+
+def _load_json_file(path):
     try:
-        out = subprocess.run(
-            ["gcloud", "auth", "application-default", "print-access-token"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return out.stdout.strip()
+        with open(os.path.expanduser(path)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def adc_path():
+    """Well-known location of the `gcloud auth application-default` file."""
+    cfg = os.environ.get("CLOUDSDK_CONFIG")
+    if not cfg:
+        cfg = (os.path.join(os.environ.get("APPDATA", ""), "gcloud")
+               if os.name == "nt" else os.path.expanduser("~/.config/gcloud"))
+    return os.path.join(cfg, "application_default_credentials.json")
+
+
+def _post_form(url, form, timeout=20):
+    data = urllib.parse.urlencode(form).encode()
+    req = urllib.request.Request(
+        url, data=data, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(e.read().decode("utf-8", "replace")[:200])
+
+
+def _metadata_get(path, timeout=2):
+    """Read from the GCE/Cloud Run metadata server, bypassing any HTTP proxy."""
+    req = urllib.request.Request(
+        f"http://{METADATA_HOST}/computeMetadata/v1/{path}",
+        headers={"Metadata-Flavor": "Google"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(req, timeout=timeout) as r:
+        return r.read().decode().strip()
+
+
+def _token_from_refresh(info):
+    """`authorized_user` credentials -> access token."""
+    for field in ("client_id", "client_secret", "refresh_token"):
+        if not info.get(field):
+            raise RuntimeError(f"missing {field}")
+    r = _post_form(info.get("token_uri") or OAUTH_TOKEN_URI, {
+        "client_id": info["client_id"],
+        "client_secret": info["client_secret"],
+        "refresh_token": info["refresh_token"],
+        "grant_type": "refresh_token",
+    })
+    return r["access_token"]
+
+
+def _sign_rs256(private_key_pem, message):
+    """RS256 via openssl, so service accounts work with no crypto dependency."""
+    fd, key = tempfile.mkstemp(suffix=".pem")
+    try:
+        os.chmod(key, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(private_key_pem)
+        p = subprocess.run(["openssl", "dgst", "-sha256", "-sign", key],
+                           input=message, capture_output=True)
+        if p.returncode != 0:
+            raise RuntimeError("openssl: " + p.stderr.decode().strip()[:200])
+        return p.stdout
     except FileNotFoundError:
-        _die("gcloud not found on PATH")
-    except subprocess.CalledProcessError as e:
-        _die(
-            "failed to obtain ADC token. Run "
-            "`gcloud auth application-default login` first.\n" + e.stderr.strip()
-        )
+        raise RuntimeError("openssl not found on PATH (needed to sign the JWT)")
+    finally:
+        os.unlink(key)
+
+
+def _token_from_service_account(info):
+    """`service_account` credentials -> access token via a signed JWT grant."""
+    for field in ("client_email", "private_key"):
+        if not info.get(field):
+            raise RuntimeError(f"missing {field}")
+    uri = info.get("token_uri") or OAUTH_TOKEN_URI
+    now = int(time.time())
+    seg = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=")
+    signing_input = seg({"alg": "RS256", "typ": "JWT"}) + b"." + seg(
+        {"iss": info["client_email"], "scope": SCOPE, "aud": uri,
+         "iat": now, "exp": now + 3600})
+    sig = base64.urlsafe_b64encode(
+        _sign_rs256(info["private_key"], signing_input)).rstrip(b"=")
+    r = _post_form(uri, {
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": (signing_input + b"." + sig).decode()})
+    return r["access_token"]
+
+
+def _token_from_credentials_file(info):
+    kind = (info or {}).get("type")
+    if kind == "authorized_user":
+        return _token_from_refresh(info)
+    if kind == "service_account":
+        return _token_from_service_account(info)
+    raise RuntimeError(f"unsupported credential type {kind!r}")
+
+
+def _gcloud(args):
+    p = subprocess.run(["gcloud"] + args, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(p.stderr.strip().splitlines()[-1][:200]
+                           if p.stderr.strip() else "gcloud failed")
+    return p.stdout.strip()
+
+
+def get_token():
+    """Find an access token. Returns (token, source); exits if none is found."""
+    tried = []
+    tok = os.environ.get("GDA_ACCESS_TOKEN")
+    if tok:
+        return tok, "$GDA_ACCESS_TOKEN"
+
+    sa = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if sa:
+        info = _load_json_file(sa)
+        if info is None:
+            tried.append(f"$GOOGLE_APPLICATION_CREDENTIALS: cannot read {sa}")
+        else:
+            try:
+                return _token_from_credentials_file(info), \
+                    f"$GOOGLE_APPLICATION_CREDENTIALS ({sa})"
+            except Exception as e:
+                tried.append(f"$GOOGLE_APPLICATION_CREDENTIALS: {e}")
+
+    path = adc_path()
+    info = _load_json_file(path)
+    if info is None:
+        tried.append(f"ADC file: not found at {path}")
+    else:
+        try:
+            return _token_from_credentials_file(info), f"ADC file ({path})"
+        except Exception as e:
+            tried.append(f"ADC file: {e}")
+
+    try:
+        blob = _metadata_get("instance/service-accounts/default/token")
+        return json.loads(blob)["access_token"], f"metadata server ({METADATA_HOST})"
+    except Exception as e:
+        tried.append(f"metadata server: {e}")
+
+    for cmd, label in ((["auth", "application-default", "print-access-token"],
+                        "gcloud ADC"),
+                       (["auth", "print-access-token"], "gcloud user")):
+        try:
+            t = _gcloud(cmd)
+            if t:
+                return t, f"{label} (`gcloud {' '.join(cmd)}`)"
+        except FileNotFoundError:
+            tried.append("gcloud: not on PATH")
+            break
+        except Exception as e:
+            tried.append(f"{label}: {e}")
+
+    raise Unavailable(
+        "could not find credentials. Run `gcloud auth application-default "
+        "login`, set $GOOGLE_APPLICATION_CREDENTIALS to a service-account key, "
+        "or pass --access-token / $GDA_ACCESS_TOKEN.\nTried:\n  - "
+        + "\n  - ".join(tried))
+
+
+def detect_project():
+    """Find the billing/quota project. Returns (project, source); exits if none."""
+    tried = []
+    for var in PROJECT_ENV_VARS:
+        if os.environ.get(var):
+            return os.environ[var], f"${var}"
+    tried.append("env: none of $" + " $".join(PROJECT_ENV_VARS) + " set")
+
+    for path, label in ((os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
+                         "$GOOGLE_APPLICATION_CREDENTIALS"),
+                        (adc_path(), "ADC file")):
+        if not path:
+            continue
+        info = _load_json_file(path) or {}
+        # A user ADC file carries quota_project_id; a key file carries project_id.
+        proj = info.get("quota_project_id") or info.get("project_id")
+        if proj:
+            return proj, f"{label} ({path})"
+        tried.append(f"{label}: no quota_project_id/project_id")
+
+    try:
+        return _metadata_get("project/project-id"), f"metadata server ({METADATA_HOST})"
+    except Exception as e:
+        tried.append(f"metadata server: {e}")
+
+    try:
+        proj = _gcloud(["config", "get-value", "project"])
+        if proj and proj != "(unset)":
+            return proj, "`gcloud config get-value project`"
+        tried.append("gcloud config: project unset")
+    except FileNotFoundError:
+        tried.append("gcloud: not on PATH")
+    except Exception as e:
+        tried.append(f"gcloud config: {e}")
+
+    raise Unavailable(
+        "could not determine the project. Pass --project, set "
+        "$GOOGLE_CLOUD_PROJECT, or run `gcloud config set project PROJECT`."
+        "\nTried:\n  - " + "\n  - ".join(tried))
 
 
 class Client:
     def __init__(self, project, location, version, host, token=None, verbose=False):
-        self.project = project
+        self._project = project
+        self._project_source = "--project" if project else None
         self.location = location
         self.version = version
         self.host = host.rstrip("/")
         self._token = token
+        self._token_source = "--access-token" if token else None
         self.verbose = verbose
 
+    # Both are resolved lazily, so a bad-flags error surfaces before we go
+    # looking for credentials or a project.
     @property
     def token(self):
-        # Fetched lazily: a bad-flags error should surface before an auth error.
         if not self._token:
-            self._token = get_token()
+            try:
+                self._token, self._token_source = get_token()
+            except Unavailable as e:
+                _die(e)
         return self._token
+
+    @property
+    def project(self):
+        if not self._project:
+            try:
+                self._project, self._project_source = detect_project()
+            except Unavailable as e:
+                _die(e)
+        return self._project
 
     @property
     def parent(self):
@@ -93,6 +313,9 @@ class Client:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         if self.verbose:
+            print(f"# auth: {self._token_source}", file=sys.stderr)
+            print(f"# project: {self.project} (from {self._project_source})",
+                  file=sys.stderr)
             print(f"# {method} {url}", file=sys.stderr)
             if body is not None:
                 print("# body: " + json.dumps(body), file=sys.stderr)
@@ -366,6 +589,42 @@ def _render_data(data_msg):
 
 
 # ---------------------------------------------------------------------------
+# Doctor
+# ---------------------------------------------------------------------------
+
+def doctor(c, args):
+    """Report whether the CLI can run with no flags, and what is missing."""
+    problems = []
+    if c._token:
+        print("[ok]   credentials: --access-token")
+    else:
+        try:
+            c._token, c._token_source = get_token()
+            print(f"[ok]   credentials: {c._token_source}")
+        except Unavailable as e:
+            print("[FAIL] credentials: none found")
+            problems.append(str(e))
+    if c._project:
+        print(f"[ok]   project: {c._project} (from --project)")
+    else:
+        try:
+            c._project, c._project_source = detect_project()
+            print(f"[ok]   project: {c._project} (from {c._project_source})")
+        except Unavailable as e:
+            print("[FAIL] project: could not be determined")
+            problems.append(str(e))
+    if problems:
+        _die("\n\n".join(problems))
+    print(f"[..]   calling {c.host}/{c.version}/{c.parent}/dataAgents")
+    # Any failure here (API disabled, no permission) _dies with the API's own
+    # google.rpc.Status, which names the fix.
+    resp = c.request("GET", f"{c.parent}/dataAgents")
+    agents = resp.get("dataAgents") or [] if isinstance(resp, dict) else []
+    print(f"[ok]   API reachable and authorized: {len(agents)} data agent(s) visible")
+    print("\nReady: no flags needed.")
+
+
+# ---------------------------------------------------------------------------
 # Raw escape hatch
 # ---------------------------------------------------------------------------
 
@@ -389,13 +648,16 @@ def raw(c, args):
 
 def build_parser():
     p = argparse.ArgumentParser(prog="gda", description=__doc__.splitlines()[0])
-    p.add_argument("--project", required=True, help="GCP project id (billing/quota)")
+    p.add_argument("--project",
+                   help="GCP project id (billing/quota). Auto-detected from "
+                        "$GOOGLE_CLOUD_PROJECT, the ADC file, the metadata "
+                        "server, or gcloud config when omitted.")
     p.add_argument("--location", default=DEFAULT_LOCATION, help="default: global")
     p.add_argument("--version", default=DEFAULT_VERSION,
                    help="API version: v1 (GA, default), v1beta, v1alpha")
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--access-token",
-                   help="OAuth2 access token to use instead of gcloud ADC; "
+                   help="OAuth2 access token, skipping credential discovery; "
                         "falls back to $GDA_ACCESS_TOKEN")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="print request method/URL/body to stderr")
@@ -481,6 +743,10 @@ def build_parser():
     add_context_flags(ch)
     ch.set_defaults(func=chat)
 
+    # doctor ------------------------------------------------------------
+    dc = sub.add_parser("doctor", help="check credentials, project, and API access")
+    dc.set_defaults(func=doctor)
+
     # raw ---------------------------------------------------------------
     rw = sub.add_parser("raw", help="arbitrary request against any endpoint")
     rw.add_argument("method", help="GET/POST/PATCH/DELETE")
@@ -493,13 +759,14 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    token = args.access_token or os.environ.get("GDA_ACCESS_TOKEN")
+    # $GDA_ACCESS_TOKEN is handled inside get_token() so that -v can report the
+    # source accurately; only the flag short-circuits discovery here.
     c = Client(
         project=args.project,
         location=args.location,
         version=args.version,
         host=args.host,
-        token=token,
+        token=args.access_token,
         verbose=args.verbose,
     )
     args.func(c, args)

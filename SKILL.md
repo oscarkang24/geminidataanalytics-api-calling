@@ -19,17 +19,41 @@ Full CRUD over the public Conversational Analytics API at
 - **DataChatService** — manage `conversations` and run `chat` (natural-language
   questions answered from the configured data).
 
-All requests authenticate with an ADC token
-(`gcloud auth application-default print-access-token`) and send the billing
-project in the `x-goog-user-project` header.
+Credentials and the billing project are discovered automatically, in the order
+Google's own client libraries use, so **no flags are needed** on a configured
+machine:
+
+| | token | project |
+| --- | --- | --- |
+| 1 | `$GDA_ACCESS_TOKEN` | `--project` |
+| 2 | `$GOOGLE_APPLICATION_CREDENTIALS` service-account key (signed JWT grant) | `$GDA_PROJECT` / `$GOOGLE_CLOUD_PROJECT` / `$GCLOUD_PROJECT` / `$CLOUDSDK_CORE_PROJECT` |
+| 3 | gcloud ADC file (refresh-token grant) | ADC `quota_project_id` / key `project_id` |
+| 4 | GCE / Cloud Run metadata server | metadata server |
+| 5 | `gcloud auth [application-default] print-access-token` | `gcloud config get-value project` |
+
+`--access-token` and `--project` override their chain. The project is sent in
+`x-goog-user-project`.
+
+Run `python3 scripts/gda.py doctor` first — it reports which source supplied
+each, then makes a real call to confirm the API is enabled and authorized:
+
+```bash
+python3 scripts/gda.py doctor
+# [ok]   credentials: ADC file (~/.config/gcloud/application_default_credentials.json)
+# [ok]   project: my-proj (from $GOOGLE_CLOUD_PROJECT)
+# [ok]   API reachable and authorized: 3 data agent(s) visible
+```
 
 ## Prerequisites
 
-1. ADC configured: `gcloud auth application-default login`
+1. Credentials from any source in the table above (on a workstation:
+   `gcloud auth application-default login`).
 2. The API enabled on the project:
    `gcloud services enable geminidataanalytics.googleapis.com --project PROJECT`
 3. The caller has the relevant `geminidataanalytics.*` IAM permissions and can
    read the underlying BigQuery data.
+
+`doctor` tells you which of these is missing.
 
 ## The CLI
 
@@ -41,13 +65,15 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
     [-v] <resource> <action> [flags]
 ```
 
+- `--project` is optional — omit it to use the detected project.
 - `--location` defaults to `global`.
 - `--version` defaults to `v1` (**GA** — the version external customers should
   use). `v1beta` (BETA) and `v1alpha` (ALPHA) expose preview-only features.
 - `-v` echoes the method/URL/body to stderr — use it to show the user the exact
   HTTP call.
 - `--access-token` (or `$GDA_ACCESS_TOKEN`) supplies an OAuth2 token directly,
-  bypassing gcloud ADC.
+  skipping credential discovery.
+- `-v` also reports which source the token and project came from.
 - Output is always the raw JSON response, pretty-printed.
 
 See `REFERENCE.md` for the full endpoint and payload reference.
