@@ -31,7 +31,9 @@ machine:
 | 4 | GCE / Cloud Run metadata server | metadata server |
 | 5 | `gcloud auth [application-default] print-access-token` | `gcloud config get-value project` |
 
-`--access-token` and `--project` override their chain. The project is sent in
+Setting `$GOOGLE_APPLICATION_CREDENTIALS` names the identity to use: if no token
+can be obtained from it the CLI fails rather than quietly running as a different
+principal. `--access-token` and `--project` override their chain. The project is sent in
 `x-goog-user-project`.
 
 Run `python3 scripts/gda.py doctor` first (or `bash tests/run_live.sh

@@ -76,7 +76,7 @@ def _post_form(url, form, timeout=20):
         url, data=data, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except urllib.error.HTTPError as e:
         raise RuntimeError(e.read().decode("utf-8", "replace")[:200])
@@ -167,17 +167,25 @@ def get_token():
     if tok:
         return tok, "$GDA_ACCESS_TOKEN"
 
+    # Setting GOOGLE_APPLICATION_CREDENTIALS names the identity to use. Falling
+    # through to a different one would run as the wrong principal, with
+    # different IAM, so fail loudly instead - as Google's own libraries do.
     sa = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     if sa:
         info = _load_json_file(sa)
         if info is None:
-            tried.append(f"$GOOGLE_APPLICATION_CREDENTIALS: cannot read {sa}")
-        else:
-            try:
-                return _token_from_credentials_file(info), \
-                    f"$GOOGLE_APPLICATION_CREDENTIALS ({sa})"
-            except Exception as e:
-                tried.append(f"$GOOGLE_APPLICATION_CREDENTIALS: {e}")
+            raise Unavailable(
+                f"$GOOGLE_APPLICATION_CREDENTIALS is set to {sa}, which cannot "
+                "be read as JSON. Fix or unset it rather than falling back to "
+                "another identity.")
+        try:
+            return (_token_from_credentials_file(info),
+                    f"$GOOGLE_APPLICATION_CREDENTIALS ({sa})")
+        except Exception as e:
+            raise Unavailable(
+                f"$GOOGLE_APPLICATION_CREDENTIALS is set to {sa} but no token "
+                f"could be obtained from it:\n  {e}\nFix or unset it rather "
+                "than silently using a different identity.")
 
     path = adc_path()
     info = _load_json_file(path)
@@ -322,7 +330,7 @@ class Client:
                 print("# body: " + json.dumps(body), file=sys.stderr)
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req) as resp:
+            with _urlopen(req) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")
@@ -335,6 +343,52 @@ class Client:
             return json.loads(raw)
         except json.JSONDecodeError:
             return raw
+
+
+_CERTIFI_NOTED = False
+
+
+def _is_cert_error(e):
+    reason = getattr(e, "reason", e)
+    return (isinstance(reason, ssl.SSLCertVerificationError)
+            or "CERTIFICATE_VERIFY" in str(reason).upper())
+
+
+def _certifi_context():
+    """An SSL context using certifi's CA bundle, if certifi is installed."""
+    try:
+        import certifi
+    except ImportError:
+        return None
+    try:
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
+def _urlopen(req, timeout=None):
+    """urlopen, retrying once with certifi when the system store rejects the cert.
+
+    Only ever runs after a verification failure, so a corporate CA that lives in
+    the system store (and not in certifi) keeps working exactly as before.
+    """
+    global _CERTIFI_NOTED
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError:
+        raise
+    except urllib.error.URLError as e:
+        ctx = _certifi_context() if _is_cert_error(e) else None
+        if ctx is None:
+            raise
+        if not _CERTIFI_NOTED:
+            print("# note: the system trust store rejected the certificate; "
+                  "retrying with certifi.\n"
+                  "#       make it permanent with: export SSL_CERT_FILE=$("
+                  "python3 -c 'import certifi; print(certifi.where())')",
+                  file=sys.stderr)
+            _CERTIFI_NOTED = True
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
 
 
 def _connection_error(e):

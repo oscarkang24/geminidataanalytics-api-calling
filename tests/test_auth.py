@@ -200,7 +200,9 @@ check("no project anywhere -> exit 1, actionable message",
       p.stderr[:300])
 p, c = run(["--project", "p", "agents", "list"],
            env_extra=env(GOOGLE_APPLICATION_CREDENTIALS=os.path.join(TMP, "nope.json")))
-check("unreadable key file -> falls through, reports it", p.returncode == 1 and "cannot read" in p.stderr, p.stderr[:250])
+check("unreadable key file -> hard fail, never another identity",
+      p.returncode == 1 and "cannot be read as JSON" in p.stderr
+      and "falling back to" in p.stderr, p.stderr[:250])
 bad = write(os.path.join(TMP, "bad.json"), {"type": "external_account"})
 p, c = run(["--project", "p", "agents", "list"], env_extra=env(GOOGLE_APPLICATION_CREDENTIALS=bad))
 check("unsupported credential type reported clearly",
