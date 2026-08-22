@@ -1,0 +1,428 @@
+{
+  "metadata": {
+    "skill_name": "geminidataanalytics",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-08-22T18:44:34Z",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "configuration": "old_skill_clean",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6667,
+        "passed": 6,
+        "failed": 0,
+        "total": 9,
+        "time_seconds": 130.3,
+        "tokens": 48701,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": false,
+          "evidence": "first two: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate ; cat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": false,
+          "evidence": "filesystem sweep for credential files; read the proxy documentation; probed the agent proxy; filesystem-wide find"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": false,
+          "evidence": "12 commands: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate\ncat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md\ncat /home/user/geminidataanalytics-workspace/skill-s"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I couldn't create `sales-bot` or ask it anything \u2014 this machine has no usable Google credentials, so every call to the Conversational Analytics API comes back 401. Nothing was created; there's no half"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I couldn't create `sales-bot` or ask it anything \u2014 this machine has no usable Google credentials, so every call to the Conversational Analytics API comes back 401. Nothing was created; there's no half"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=True notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I couldn't create `sales-bot` or ask it anything \u2014 this machine has no usable Google credentials, so every call to the Conversational Analytics API comes back 401. Nothing was created; there's no half"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I couldn't create `sales-bot` or ask it anything \u2014 this machine has no usable Google credentials, so every call to the Conversational Analytics API comes back 401. Nothing was created; there's no half"
+        },
+        {
+          "text": "baseline is uncontaminated (did not see the new skill's wording)",
+          "passed": true,
+          "evidence": "no gate phrasing found"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "old_skill_clean",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6667,
+        "passed": 6,
+        "failed": 0,
+        "total": 9,
+        "time_seconds": 181.8,
+        "tokens": 55248,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": false,
+          "evidence": "first two: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate ; cat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": false,
+          "evidence": "filesystem sweep for credential files; filesystem-wide find"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": false,
+          "evidence": "15 commands: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate\ncat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md\ncat /home/user/geminidataanalytics-workspace/skill-s"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I found it. Nothing is wrong with the data agent CLI or with your network \u2014 this machine has no usable Google credentials, and a placeholder value is hiding that fact behind a confusing 401.\n\n## What'"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I found it. Nothing is wrong with the data agent CLI or with your network \u2014 this machine has no usable Google credentials, and a placeholder value is hiding that fact behind a confusing 401.\n\n## What'"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=True notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I found it. Nothing is wrong with the data agent CLI or with your network \u2014 this machine has no usable Google credentials, and a placeholder value is hiding that fact behind a confusing 401.\n\n## What'"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I found it. Nothing is wrong with the data agent CLI or with your network \u2014 this machine has no usable Google credentials, and a placeholder value is hiding that fact behind a confusing 401.\n\n## What'"
+        },
+        {
+          "text": "baseline is uncontaminated (did not see the new skill's wording)",
+          "passed": true,
+          "evidence": "no gate phrasing found"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "old_skill_clean",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.6667,
+        "passed": 6,
+        "failed": 0,
+        "total": 9,
+        "time_seconds": 133.6,
+        "tokens": 48334,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": false,
+          "evidence": "first two: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate ; cat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": false,
+          "evidence": "filesystem sweep for credential files; read the proxy documentation; probed the agent proxy; filesystem-wide find"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": false,
+          "evidence": "15 commands: ls -la /home/user/geminidataanalytics-workspace/skill-snapshot-pregate\ncat /home/user/geminidataanalytics-workspace/skill-snapshot-pregate/SKILL.md\ncd /home/user/geminidataanalytics-workspace/skill-sn"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I couldn't list your data agents \u2014 this machine has no working Google credentials and no project set, so the call can't be made. Here's what I found.\n\n**1. A placeholder token was masking everything e"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I couldn't list your data agents \u2014 this machine has no working Google credentials and no project set, so the call can't be made. Here's what I found.\n\n**1. A placeholder token was masking everything e"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=False notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I couldn't list your data agents \u2014 this machine has no working Google credentials and no project set, so the call can't be made. Here's what I found.\n\n**1. A placeholder token was masking everything e"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I couldn't list your data agents \u2014 this machine has no working Google credentials and no project set, so the call can't be made. Here's what I found.\n\n**1. A placeholder token was masking everything e"
+        },
+        {
+          "text": "baseline is uncontaminated (did not see the new skill's wording)",
+          "passed": true,
+          "evidence": "no gate phrasing found"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 0,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 47.2,
+        "tokens": 40521,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": true,
+          "evidence": "first two: cd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1 ; cd /root/.claude/skills/geminidataanalytics && env -u CLOUDSDK_AUTH_ACCESS_TOKEN python3 scripts/gda.py doctor 2>&1"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": true,
+          "evidence": "no investigation commands"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": true,
+          "evidence": "2 commands: cd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1\ncd /root/.claude/skills/geminidataanalytics && env -u CLOUDSDK_AUTH_ACCESS_TOKEN python3 scripts/gda.py doctor 2>&1"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I couldn't create the agent \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your data. Nothing was created; there's no h"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I couldn't create the agent \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your data. Nothing was created; there's no h"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=False notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I couldn't create the agent \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your data. Nothing was created; there's no h"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I couldn't create the agent \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your data. Nothing was created; there's no h"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 45.5,
+        "tokens": 40243,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": true,
+          "evidence": "first two: cd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1 ; cd /root/.claude/skills/geminidataanalytics && env -u CLOUDSDK_AUTH_ACCESS_TOKEN python3 scripts/gda.py doctor 2>&1"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": true,
+          "evidence": "no investigation commands"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": true,
+          "evidence": "2 commands: cd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1\ncd /root/.claude/skills/geminidataanalytics && env -u CLOUDSDK_AUTH_ACCESS_TOKEN python3 scripts/gda.py doctor 2>&1"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I ran the Conversational Analytics API diagnostic (`gda.py doctor`). The data agent commands are failing for two reasons, both credential/config prerequisites \u2014 nothing is wrong with the network or th"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I ran the Conversational Analytics API diagnostic (`gda.py doctor`). The data agent commands are failing for two reasons, both credential/config prerequisites \u2014 nothing is wrong with the network or th"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=True notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I ran the Conversational Analytics API diagnostic (`gda.py doctor`). The data agent commands are failing for two reasons, both credential/config prerequisites \u2014 nothing is wrong with the network or th"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I ran the Conversational Analytics API diagnostic (`gda.py doctor`). The data agent commands are failing for two reasons, both credential/config prerequisites \u2014 nothing is wrong with the network or th"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 51.8,
+        "tokens": 42202,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "checks the prerequisite early (doctor within the first 2 commands)",
+          "passed": true,
+          "evidence": "first two: ls -la /root/.claude/skills/geminidataanalytics/ ; cd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1"
+        },
+        {
+          "text": "does not investigate the environment for credentials",
+          "passed": true,
+          "evidence": "no investigation commands"
+        },
+        {
+          "text": "stops quickly (5 commands or fewer)",
+          "passed": true,
+          "evidence": "4 commands: ls -la /root/.claude/skills/geminidataanalytics/\ncd /root/.claude/skills/geminidataanalytics && python3 scripts/gda.py doctor 2>&1\ncd /root/.claude/skills/geminidataanalytics && unset CLOUDSDK_AUTH_AC"
+        },
+        {
+          "text": "reply says credentials are the blocker",
+          "passed": true,
+          "evidence": "I can't list your data agents \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your agents.\n\n`gda.py doctor` found two bl"
+        },
+        {
+          "text": "reply separates network from auth",
+          "passed": true,
+          "evidence": "I can't list your data agents \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your agents.\n\n`gda.py doctor` found two bl"
+        },
+        {
+          "text": "any gcloud advice is marked unavailable on this machine",
+          "passed": true,
+          "evidence": "mentions login=True notes_absent=True"
+        },
+        {
+          "text": "reply offers a fix that works without gcloud (key file or token)",
+          "passed": true,
+          "evidence": "I can't list your data agents \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your agents.\n\n`gda.py doctor` found two bl"
+        },
+        {
+          "text": "does not claim the agent was created",
+          "passed": true,
+          "evidence": "I can't list your data agents \u2014 this machine has no Google Cloud credentials, so every call to the Conversational Analytics API is rejected before it reaches your agents.\n\n`gda.py doctor` found two bl"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "old_skill_clean": {
+      "pass_rate": {
+        "mean": 0.6667,
+        "stddev": 0.0,
+        "min": 0.6667,
+        "max": 0.6667
+      },
+      "time_seconds": {
+        "mean": 148.5667,
+        "stddev": 28.8282,
+        "min": 130.3,
+        "max": 181.8
+      },
+      "tokens": {
+        "mean": 50761.0,
+        "stddev": 3890.1862,
+        "min": 48334,
+        "max": 55248
+      }
+    },
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 48.1667,
+        "stddev": 3.2593,
+        "min": 45.5,
+        "max": 51.8
+      },
+      "tokens": {
+        "mean": 40988.6667,
+        "stddev": 1059.9313,
+        "min": 40243,
+        "max": 42202
+      }
+    },
+    "delta": {
+      "pass_rate": "-0.33",
+      "time_seconds": "+100.4",
+      "tokens": "+9772"
+    }
+  },
+  "notes": []
+}

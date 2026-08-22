@@ -149,12 +149,16 @@ def main():
     target = sys.argv[1]
     runs = []
     if "--all" in sys.argv:
+        # Discover configuration directories rather than hardcoding names — a
+        # hardcoded list silently skips any run named something else, which is
+        # worse than failing, because the summary still looks complete.
         for ev in sorted(os.listdir(target)):
             d = os.path.join(target, ev)
-            if os.path.isdir(d):
-                for cfg in ("with_skill", "old_skill", "without_skill"):
-                    if os.path.isdir(os.path.join(d, cfg)):
-                        runs.append(os.path.join(d, cfg))
+            if not os.path.isdir(d):
+                continue
+            for cfg in sorted(os.listdir(d)):
+                if os.path.isdir(os.path.join(d, cfg, "outputs")):
+                    runs.append(os.path.join(d, cfg))
     else:
         runs = [target]
 
@@ -162,7 +166,10 @@ def main():
         g = grade(run)
         json.dump(g, open(os.path.join(run, "grading.json"), "w"), indent=2)
         n = sum(1 for e in g["expectations"] if e["passed"])
-        rel = os.path.relpath(run, target)
+        # When grading one run, relpath against itself gives "."; show enough
+        # path to tell runs apart.
+        rel = os.path.relpath(run, target) if "--all" in sys.argv else \
+            os.path.join(os.path.basename(os.path.dirname(run)), os.path.basename(run))
         print(f"{rel:70} {n}/{len(g['expectations'])} passed  "
               f"commands={g['command_count']}")
 
