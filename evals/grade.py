@@ -67,7 +67,8 @@ def grade(run_dir):
 
     if cmds is None:
         add("run produced a transcript", False, "transcript.md missing")
-        return {"expectations": exp, "command_count": None}
+        return {"expectations": exp, "command_count": None,
+                "summary": {"passed": 0, "total": 1, "pass_rate": 0.0}}
 
     first_two = " ; ".join(cmds[:2])
     add("checks the prerequisite early (doctor within the first 2 commands)",
@@ -108,7 +109,14 @@ def grade(run_dir):
         not re.search(r"(created|i've created|successfully created)\s+(the\s+)?(data\s+)?agent", low),
         reply[:200])
 
-    return {"expectations": exp, "command_count": len(cmds)}
+    passed = sum(1 for e in exp if e["passed"])
+    return {
+        "expectations": exp,
+        "command_count": len(cmds),
+        # `summary` is the shape the skill-creator aggregator reads.
+        "summary": {"passed": passed, "total": len(exp),
+                    "pass_rate": round(passed / len(exp), 4) if exp else 0.0},
+    }
 
 
 def main():
