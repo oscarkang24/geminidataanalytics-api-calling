@@ -9,10 +9,13 @@ description: >
   data agent on myproj.sales.orders", "list data agents", "ask my sales agent
   what revenue was last month". Also surface it when someone wants to query a
   warehouse in plain English, or wants their team asking questions of their
-  data without writing SQL — but where the request names neither a product nor
-  an existing data agent, confirm they mean the Conversational Analytics API
-  before running anything. Wraps the REST endpoints in a dependency-free Python
-  CLI using Application Default Credentials. Do NOT use for: writing or running
+  data without writing SQL — but where it is still unclear what to build on
+  (no product, table or existing agent identified, and nothing earlier in the
+  conversation settles it), confirm they mean the Conversational Analytics API
+  before creating anything. Read-only checks like `doctor` and `agents list`
+  are fine to run first, and make for a better question. Wraps the REST
+  endpoints in a dependency-free Python CLI using Application Default
+  Credentials. Do NOT use for: writing or running
   plain BigQuery SQL, inspecting or altering table schemas, local CSV or pandas
   analysis, general-purpose or customer-support chatbots, or other Google agent
   products (Vertex AI Agent Builder / Agentspace, ADK / Agent Engine,
@@ -93,6 +96,15 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 See `REFERENCE.md` for the full endpoint and payload reference.
 
 ### Data agents
+
+`agents create` makes a durable cloud resource in one command, and the id it
+takes cannot be reused for ~30 days after a delete. So when the target is still
+unclear — which table, which billing project, or whether the user meant this
+API at all — confirm before running it. Run `doctor` (and `agents list`) first:
+they are read-only, and knowing the detected project and existing agents makes
+the question concrete rather than asking the user to recall ids from memory.
+Put the recommendation, the one-line alternatives and the open questions in a
+single message, rather than interrogating one at a time.
 
 ```bash
 # Create an agent over a BigQuery table (createSync — returns the resource).
