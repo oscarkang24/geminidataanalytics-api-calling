@@ -31,18 +31,39 @@ are only grading the routing decision.
 | A1.4 | "Start a conversation with agent `sales` and ask a question over BigQuery with the Conversational Analytics API." | Skill triggers; conversations + chat. |
 | A1.5 | "Chat with a data agent about the top 5 products." | Skill triggers; `chat`. |
 | A1.6 | "Delete the data agent `old-agent`." | Skill triggers; `agents delete`. |
+| A1.7 | "Ask a question over my Looker explore." | Skill triggers; note `--bq-table` won't do it — `raw` with a `looker` datasource. |
+| A1.8 | "Rename my data agent to 'Revenue bot'." | Skill triggers; `agents update --display-name`. |
 
 ### A2. Should NOT trigger
+
+The neighbouring Google "agent" products are the dangerous ones: they are
+lexically close and a model without strong product knowledge can be pulled in.
 
 | # | Prompt | Expected |
 | --- | --- | --- |
 | A2.1 | "Write a BigQuery SQL query that counts orders per day." | No trigger — plain SQL authoring, not the CA API. |
 | A2.2 | "What columns are in my BigQuery table `sales.orders`?" | No trigger — BigQuery schema lookup, not CA. |
 | A2.3 | "Analyze this local CSV with pandas and plot revenue." | No trigger — local data analysis. |
-| A2.4 | "Create a Vertex AI Agent Builder app." | No trigger — different product. |
+| A2.4 | "Create a Vertex AI Agent Builder app." | No trigger — different product, named in the description's exclusions. |
 | A2.5 | "Summarize this document." | No trigger — unrelated. |
+| A2.6 | "Build me a chatbot for customer support." | No trigger — not analytics over a warehouse. |
+| A2.7 | "Set up a Dialogflow CX agent for our helpdesk." | No trigger — named in the exclusions. |
+| A2.8 | "Deploy an ADK agent to Agent Engine." | No trigger — named in the exclusions. |
 
-**Grade:** count how many of the 11 route correctly. A false trigger (A2) is a
+### A3. Ambiguous — should confirm, not assume
+
+The description ends with an instruction to confirm when a warehouse
+natural-language request names no product. These grade that clause.
+
+| # | Prompt | Expected |
+| --- | --- | --- |
+| A3.1 | "Set up an AI agent that answers questions about our data." | Offer the CA API and confirm before running — it equally describes a RAG app or an ADK agent. |
+| A3.2 | "Query my data warehouse with natural language." | Offer and confirm; the user may only want SQL generated. |
+| A3.3 | "I want my team to ask questions about our sales data without knowing SQL." | Offer and confirm. |
+
+Grade A3 on whether Claude **asks** rather than silently spending credentials.
+
+**Grade:** count how many of the 19 route correctly. A false trigger (A2) is a
 worse failure than a miss (A1) for an external skill — note them separately.
 
 ---
@@ -100,5 +121,7 @@ Any non-GA endpoint here is an automatic FAIL for the production constraint.
 
 ## Scoring
 
-- **Triggering:** __/6 positive, __/5 negative-correct. Flag every false trigger.
+- **Triggering:** __/8 positive, __/8 negative-correct, __/3 ambiguous-confirmed.
+  Flag every false trigger — a wrong activation is worse than a miss, and the
+  A2.4/A2.7/A2.8 neighbours are where it will happen.
 - **Live:** __/9 functional PASS. B10 external-safety: PASS/FAIL (hard gate).

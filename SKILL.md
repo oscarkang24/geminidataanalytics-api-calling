@@ -1,12 +1,20 @@
 ---
 name: geminidataanalytics
 description: >
-  Use when calling the Gemini Data Analytics / Conversational Analytics HTTP API
-  (geminidataanalytics.googleapis.com) — triggers include "create a data agent",
-  "list data agents", "start a conversation", "ask a question over BigQuery with
-  the CA API / Data QnA", "chat with a data agent", or any CRUD on dataAgents /
-  conversations. Wraps the REST endpoints with a dependency-free Python CLI that
-  authenticates via Application Default Credentials.
+  Use for the Gemini Data Analytics / Conversational Analytics API
+  (geminidataanalytics.googleapis.com, also called Data QnA or the CA API):
+  create, list, get, update or delete dataAgents; create or manage
+  conversations; and any request to ask, chat, or answer natural-language
+  questions over BigQuery or Looker data through a data agent — e.g. "create a
+  data agent on myproj.sales.orders", "list data agents", "ask my sales agent
+  what revenue was last month", "let the team query our warehouse in plain
+  English". Wraps the REST endpoints in a dependency-free Python CLI that
+  authenticates via Application Default Credentials. Do NOT use for: writing or
+  running plain BigQuery SQL, inspecting table schemas, local CSV or pandas
+  analysis, or other Google agent products (Vertex AI Agent Builder /
+  Agentspace, ADK, Dialogflow) — those are separate APIs. If someone asks for
+  natural-language querying of a warehouse without naming a product, confirm
+  they mean the Conversational Analytics API before running anything.
 ---
 
 # Gemini Data Analytics HTTP API
