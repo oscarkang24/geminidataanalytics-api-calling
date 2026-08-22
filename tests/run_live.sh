@@ -22,6 +22,9 @@ PROJ_FLAG=()
 # $GDA_HOST points the whole run at a different endpoint (used by the tests).
 HOST_FLAG=()
 [ -n "${GDA_HOST:-}" ] && HOST_FLAG=(--host "$GDA_HOST")
+# Expand arrays with the ${a[@]+"${a[@]}"} guard throughout: under `set -u`,
+# bash 3.2 - still the /bin/bash macOS ships - treats "${empty[@]}" as an
+# unbound variable and aborts the script.
 
 if [ "${GDA_SKIP_OFFLINE:-}" != "1" ]; then
   echo "=============== 1/3  offline suites ==============="
@@ -35,7 +38,7 @@ fi
 
 echo
 echo "=============== 2/3  doctor ==============="
-if ! python3 scripts/gda.py "${PROJ_FLAG[@]}" "${HOST_FLAG[@]}" doctor; then
+if ! python3 scripts/gda.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} ${HOST_FLAG[@]+"${HOST_FLAG[@]}"} doctor; then
   cat >&2 <<'HINT'
 
 doctor failed. The usual fixes:
@@ -50,4 +53,4 @@ fi
 
 echo
 echo "=============== 3/3  live lifecycle ==============="
-python3 tests/live_e2e.py "${PROJ_FLAG[@]}" --bq-table "$BQ_TABLE"
+python3 tests/live_e2e.py ${PROJ_FLAG[@]+"${PROJ_FLAG[@]}"} --bq-table "$BQ_TABLE"

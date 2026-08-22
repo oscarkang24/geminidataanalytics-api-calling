@@ -76,7 +76,7 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 ## Tests
 
 ```bash
-bash tests/run_all.sh      # 185 checks, no credentials needed
+bash tests/run_all.sh      # 192 checks, no credentials needed
 ```
 
 | Suite | What it checks | Needs |
@@ -85,6 +85,7 @@ bash tests/run_all.sh      # 185 checks, no credentials needed
 | `tests/test_docs.py` | Every command shown in `SKILL.md` and `README.md` actually parses and runs. | nothing |
 | `tests/test_auth.py` | Every credential and project source, against a mock OAuth endpoint, a mock metadata server, a real RSA service-account key, and a stub `gcloud` — plus precedence and failure modes. | nothing |
 | `tests/test_tls.py` | Certificate handling: the certifi retry (against a real HTTPS server with a private CA), and that an explicitly-set `$GOOGLE_APPLICATION_CREDENTIALS` never falls through to another identity. | nothing |
+| `tests/test_shell.py` | Shell portability — notably that no array is expanded unguarded under `set -u`, which aborts on the bash 3.2 macOS still ships. | nothing |
 | `tests/test_lifecycle.py` | The full lifecycle with **zero flags** against `tests/fake_api.py`, with credentials from a simulated metadata server. Exercises `live_e2e.py` itself. | nothing |
 | `tests/test_live_routes.py` | Each URL the CLI builds resolves to the expected RPC on the **real** API. Unauthenticated calls return 401 naming the resolved method, while a wrong path returns 404 — so this validates routing without credentials. Skips itself (exit 3) when `googleapis.com` is unreachable, rather than reporting phantom routing failures. | network egress, no credentials |
 | `tests/live_e2e.py` | Full create → chat → converse → update → delete lifecycle (suite B of `EVAL.md`), with cleanup. | real credentials |

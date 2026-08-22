@@ -3,7 +3,7 @@
 set -u
 cd "$(dirname "$0")/.."
 fail=0
-for t in tests/test_requests.py tests/test_auth.py tests/test_tls.py tests/test_docs.py tests/test_lifecycle.py tests/test_live_routes.py; do
+for t in tests/test_requests.py tests/test_auth.py tests/test_tls.py tests/test_shell.py tests/test_docs.py tests/test_lifecycle.py tests/test_live_routes.py; do
   echo "=============== $t ==============="
   python3 "$t"
   rc=$?

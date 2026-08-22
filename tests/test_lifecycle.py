@@ -60,9 +60,14 @@ slim = dict(env)
 slim["GDA_SKIP_OFFLINE"] = "1"
 r = subprocess.run(["bash", os.path.join(HERE, "run_live.sh"), "auto-project.sales.orders"],
                    capture_output=True, text=True, env=slim)
-tail = [l for l in r.stdout.splitlines() if l.strip()][-3:]
-print("\n".join(tail) or r.stderr[-300:])
 runner_ok = r.returncode == 0 and "13/13" in r.stdout
+if runner_ok:
+    print("\n".join([l for l in r.stdout.splitlines() if l.strip()][-3:]))
+else:
+    # Show everything on failure: a truncated tail hides the actual cause.
+    print(f"run_live.sh exited {r.returncode}")
+    print("--- stdout ---\n" + (r.stdout.strip() or "(empty)"))
+    print("--- stderr ---\n" + (r.stderr.strip() or "(empty)"))
 
 ok = p.returncode == 0 and doctor_ok and runner_ok
 print(f"\n{'='*60}\nzero-flag lifecycle: {'PASS' if ok else 'FAIL'}"
