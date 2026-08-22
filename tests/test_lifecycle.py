@@ -41,14 +41,16 @@ env["GDA_HOST"] = api_url
 
 print("=== doctor (no flags) ===")
 d = subprocess.run([sys.executable, os.path.join(HERE, "..", "scripts", "gda.py"),
-                    "--host", api_url, "doctor"], capture_output=True, text=True, env=env)
+                    "--host", api_url, "doctor"], capture_output=True, text=True,
+                   env=env, timeout=300)
 print(d.stdout.strip() or d.stderr.strip())
 doctor_ok = d.returncode == 0 and "Ready: no flags needed." in d.stdout
 
 print("\n=== full lifecycle (no --project, no token flag) ===")
+fake_api.reset()
 p = subprocess.run([sys.executable, os.path.join(HERE, "live_e2e.py"),
                     "--bq-table", "auto-project.sales.orders"],
-                   capture_output=True, text=True, env=env)
+                   capture_output=True, text=True, env=env, timeout=600)
 print(p.stdout.strip())
 if p.returncode != 0 and p.stderr.strip():
     print(p.stderr.strip()[:500])
@@ -56,8 +58,9 @@ if p.returncode != 0 and p.stderr.strip():
 print("\n=== tests/run_live.sh end to end (skips its own offline suites) ===")
 slim = dict(env)
 slim["GDA_SKIP_OFFLINE"] = "1"
+fake_api.reset()   # the two runs share one server; state must not carry over
 r = subprocess.run(["bash", os.path.join(HERE, "run_live.sh"), "auto-project.sales.orders"],
-                   capture_output=True, text=True, env=slim)
+                   capture_output=True, text=True, env=slim, timeout=600)
 runner_ok = r.returncode == 0 and "13/13" in r.stdout
 if runner_ok:
     print("\n".join([l for l in r.stdout.splitlines() if l.strip()][-3:]))

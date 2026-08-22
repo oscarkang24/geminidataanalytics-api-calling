@@ -11,9 +11,10 @@ import json, os, subprocess, sys, tempfile, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import harness  # noqa: E402
 from harness import run, check, summary, HOST  # noqa: E402
 
-TMP = tempfile.mkdtemp(prefix="gda-auth-")
+TMP = harness._tmpdir("gda-auth-")   # self-removing
 OAUTH_HITS = []
 META_HITS = []
 
@@ -64,7 +65,10 @@ META_HOST = f"127.0.0.1:{meta.server_address[1]}"
 
 NOENV = {v: "" for v in ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS",
                          "GDA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT",
-                         "CLOUDSDK_CORE_PROJECT", "GCE_METADATA_HOST")}
+                         "CLOUDSDK_CORE_PROJECT")}
+# Empty would leave gda.py with "" and, after any refactor to `or`, let it
+# dial the real metadata server. An unroutable host cannot.
+NOENV["GCE_METADATA_HOST"] = "127.0.0.1:1"
 
 
 def env(**kw):
@@ -111,7 +115,9 @@ with open(gcloud, "w") as f:
             '  *) echo "unsupported: $*" >&2; exit 1 ;;\n'
             'esac\n')
 os.chmod(gcloud, 0o755)
-PATH_WITH_GCLOUD = stub_bin + os.pathsep + os.environ["PATH"]
+# Built on the shadowed PATH so the machine's real gcloud is unreachable
+# even if the stub fails to run.
+PATH_WITH_GCLOUD = stub_bin + os.pathsep + harness._NO_GCLOUD_PATH
 
 # --- token chain ----------------------------------------------------------
 print("--- Token discovery ---")
@@ -128,16 +134,21 @@ check("2b. JWT grant type + assertion sent",
       OAUTH_HITS and OAUTH_HITS[0]["grant_type"] == "urn:ietf:params:oauth:grant-type:jwt-bearer"
       and OAUTH_HITS[0]["assertion"].count(".") == 2, str(OAUTH_HITS[:1])[:200])
 
+# Registered unconditionally: gating on OAUTH_HITS would silently drop the
+# check when signing breaks, and a vanished check looks like a pass.
+import base64
+_h = _cl = None
 if OAUTH_HITS:
-    import base64
-    hdr, claims, _ = OAUTH_HITS[0]["assertion"].split(".")
-    pad = lambda x: x + "=" * (-len(x) % 4)
-    h = json.loads(base64.urlsafe_b64decode(pad(hdr)))
-    cl = json.loads(base64.urlsafe_b64decode(pad(claims)))
-    check("2c. JWT is RS256 with correct iss/scope/aud",
-          h == {"alg": "RS256", "typ": "JWT"} and cl["iss"].startswith("svc@")
-          and cl["scope"] == "https://www.googleapis.com/auth/cloud-platform"
-          and cl["aud"] == OAUTH_URI and cl["exp"] > cl["iat"], json.dumps([h, cl])[:300])
+    _hdr, _claims, _ = OAUTH_HITS[0]["assertion"].split(".")
+    _pad = lambda x: x + "=" * (-len(x) % 4)
+    _h = json.loads(base64.urlsafe_b64decode(_pad(_hdr)))
+    _cl = json.loads(base64.urlsafe_b64decode(_pad(_claims)))
+check("2c. JWT is RS256 with correct iss/scope/aud",
+      _h == {"alg": "RS256", "typ": "JWT"} and _cl is not None
+      and _cl["iss"].startswith("svc@")
+      and _cl["scope"] == "https://www.googleapis.com/auth/cloud-platform"
+      and _cl["aud"] == OAUTH_URI and _cl["exp"] > _cl["iat"],
+      json.dumps([_h, _cl])[:300])
 
 OAUTH_HITS.clear()
 p, c = run(["--project", "p", "agents", "list"], env_extra=env(CLOUDSDK_CONFIG=adc_cfg))
@@ -196,8 +207,10 @@ check("--project beats every detected source", c and "projects/flag-project/" in
 print("\n--- Failure modes ---")
 p, c = run(["--project", "p", "agents", "list"], env_extra=env())
 check("no credentials anywhere -> exit 1, no request", p.returncode == 1 and c is None, p.stderr[:200])
-check("error lists every source tried",
-      all(x in p.stderr for x in ("GOOGLE_APPLICATION_CREDENTIALS", "ADC file", "metadata server", "gcloud")),
+# "gcloud" also appears in the static remedy sentence, so assert on the
+# "  - <source>: <reason>" bullets, which only appear if the step ran.
+check("error lists every source it actually tried",
+      all(x in p.stderr for x in ("- ADC file:", "- metadata server:", "- gcloud")),
       p.stderr[:400])
 p, c = run(["agents", "list"], env_extra=env(GDA_ACCESS_TOKEN="t"))
 check("no project anywhere -> exit 1, actionable message",

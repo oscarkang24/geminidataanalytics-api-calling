@@ -17,6 +17,7 @@ CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 P = ["--project", "test-project-does-not-exist"]
 results = []
 TIMEOUTS = []
+TIMEOUT_NAMES = set()
 
 
 def call(argv):
@@ -68,6 +69,8 @@ def route(name, argv, expect_rpc):
     r = call(argv)
     short = r["method"].rsplit(".", 1)[-1] if r["method"] else ""
     ok = r["code"] == 401 and short == expect_rpc
+    if r.get("timeout"):
+        TIMEOUT_NAMES.add(name)
     results.append((name, ok))
     print(f"[{'PASS' if ok else 'FAIL'}] {name}\n"
           f"        -> HTTP {r['code']} {r['status']}  resolved={r['method'] or '(none)'}")
@@ -79,9 +82,14 @@ def route(name, argv, expect_rpc):
 
 # Preflight. These probes need network egress to googleapis.com (no credentials).
 # Without it every check would fail and look like a routing regression, so skip.
+# Positive preflight: a blocking proxy or captive portal answers with *some*
+# HTTP status, which the old "no response at all" test let through — and then
+# all 17 checks failed as if the CLI's URLs had regressed.
 _pre = call(["agents", "list"])
-if _pre["unreachable"]:
+if _pre["unreachable"] or _pre["code"] != 401 or _pre["status"] != "UNAUTHENTICATED":
     print("SKIPPED: cannot reach geminidataanalytics.googleapis.com.\n"
+          f"  expected HTTP 401 UNAUTHENTICATED, got "
+          f"{_pre['code']} {_pre['status']}\n"
           f"  the CLI reported: {_pre['first']}\n"
           "  These probes need outbound HTTPS to googleapis.com (but no\n"
           "  credentials). Everything else in the suite runs offline, and the\n"
@@ -138,8 +146,12 @@ for nm, o in results:
         print("  FAIL:", nm)
 if TIMEOUTS:
     print(f"\n{len(TIMEOUTS)} probe(s) timed out: " + "; ".join(TIMEOUTS))
-    real = [nm for nm, o in results if not o and "timed out" not in nm]
-    if k + len(TIMEOUTS) >= n:
+    # Skip only when EVERY failure is a timeout. Counting timeouts against the
+    # result total let a genuine routing regression hide behind them: some
+    # sections make more probe calls than they record results.
+    timed_out = {nm for nm, o in results if not o and TIMEOUT_NAMES & {nm}}
+    real = [nm for nm, o in results if not o and nm not in timed_out]
+    if not real:
         print("SKIPPED: a stalled request proves nothing about routing — most\n"
               "  likely a proxy or firewall on this network. Re-run, or go\n"
               "  straight to the live lifecycle with:\n"

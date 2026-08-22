@@ -12,6 +12,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 AGENTS, CONVERSATIONS, MESSAGES = {}, {}, {}
 
 
+def reset():
+    """Clear all state, so two runs against one server cannot collide."""
+    AGENTS.clear(); CONVERSATIONS.clear(); MESSAGES.clear()
+
+
 def _status(code, status, msg):
     return code, {"error": {"code": code, "status": status, "message": msg}}
 
@@ -90,10 +95,11 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             aid, verb = m.group(1), m.group(2)
             agent = AGENTS.get(aid)
-            if not agent or (agent.get("deleteTime") and method == "GET" and not verb):
-                if not agent:
-                    return _status(404, "NOT_FOUND", f"dataAgent {aid}")
+            if not agent:
+                return _status(404, "NOT_FOUND", f"dataAgent {aid}")
             if method == "GET" and not verb:
+                # Soft-deleted agents remain readable by name in the real API,
+                # carrying deleteTime; they are only excluded from list.
                 return 200, agent
             if method == "PATCH" and verb == ":updateSync":
                 if not q.get("updateMask"):

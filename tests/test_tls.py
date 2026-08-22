@@ -10,6 +10,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+# The checks below call urlopen IN-PROCESS, so hermetic_env() (which only
+# sanitises subprocesses) does not protect them: an ambient $https_proxy would
+# route localhost at a proxy and fail every one. This is the ordinary state of
+# a corporate laptop.
+for _v in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY",
+           "all_proxy", "ALL_PROXY"):
+    os.environ.pop(_v, None)
+os.environ["no_proxy"] = os.environ["NO_PROXY"] = "127.0.0.1,localhost,::1"
+import harness  # noqa: E402
 from harness import run, check, summary  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
@@ -17,14 +27,14 @@ spec = importlib.util.spec_from_file_location(
 gda = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gda)
 
-TMP = tempfile.mkdtemp(prefix="gda-tls-")
+TMP = harness._tmpdir("gda-tls-")   # self-removing
 key, crt = os.path.join(TMP, "k.pem"), os.path.join(TMP, "c.pem")
 
 # Python requires a SAN, but `-addext` is OpenSSL 1.1.1+ and macOS ships
 # LibreSSL, which lacks it. A config file with an extension section works on
 # both.
 cnf = os.path.join(TMP, "openssl.cnf")
-with open(cnf, "w") as f:
+with open(cnf, "w", encoding="utf-8") as f:
     f.write("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n"
             "[dn]\nCN=localhost\n"
             "[ext]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n"
@@ -32,7 +42,7 @@ with open(cnf, "w") as f:
 gen = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                       "-keyout", key, "-out", crt, "-days", "1",
                       "-config", cnf, "-extensions", "ext"],
-                     capture_output=True, text=True)
+                     capture_output=True, text=True, timeout=120)
 if gen.returncode != 0:
     print("SKIPPED: could not generate a test certificate with this openssl.\n"
           f"  {(gen.stderr or '').strip()[:200]}\n"
@@ -129,7 +139,8 @@ check("...and does not claim credentials are missing",
 
 print("\n--- no silent identity fallback ---")
 bad = os.path.join(TMP, "not-json.json")
-open(bad, "w").write("this is not json")
+with open(bad, "w", encoding="utf-8") as f:
+    f.write("this is not json")
 p, c = run(["--project", "p", "agents", "list"],
            env_extra={"GDA_ACCESS_TOKEN": "", "GOOGLE_APPLICATION_CREDENTIALS": bad})
 check("unreadable GOOGLE_APPLICATION_CREDENTIALS fails, never falls through",
@@ -138,7 +149,8 @@ check("unreadable GOOGLE_APPLICATION_CREDENTIALS fails, never falls through",
 sa = os.path.join(TMP, "sa.json")
 json.dump({"type": "service_account", "client_email": "svc@x.iam.gserviceaccount.com",
            "private_key": "-----BEGIN PRIVATE KEY-----\nnot a key\n-----END PRIVATE KEY-----\n",
-           "project_id": "sa-project", "token_uri": "http://127.0.0.1:1/token"}, open(sa, "w"))
+           "project_id": "sa-project", "token_uri": "http://127.0.0.1:1/token"},
+          open(sa, "w", encoding="utf-8"))
 p, c = run(["--project", "p", "agents", "list"],
            env_extra={"GDA_ACCESS_TOKEN": "", "GOOGLE_APPLICATION_CREDENTIALS": sa})
 check("a broken service-account key fails loudly, not onto another identity",

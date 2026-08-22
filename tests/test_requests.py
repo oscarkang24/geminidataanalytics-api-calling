@@ -4,7 +4,7 @@ HTTP server and the exact method / path / query / headers / body is asserted.
 
 No credentials and no network required.  Run:  python3 tests/test_requests.py
 """
-import json, os, sys
+import json, os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from harness import run, check, summary
 
@@ -312,8 +312,13 @@ check("ADC config points at an empty dir",
 check("metadata server cannot answer",
       _env["GCE_METADATA_HOST"].startswith("127.0.0.1:"), _env["GCE_METADATA_HOST"])
 _first = _env["PATH"].split(os.pathsep)[0]
-check("gcloud is shadowed by a failing shim",
-      os.path.exists(os.path.join(_first, "gcloud")) and "no-gcloud" in _first, _first)
+_shim = os.path.join(_first, "gcloud")
+_shim_run = subprocess.run([_shim, "auth", "print-access-token"],
+                           capture_output=True, text=True, timeout=30) \
+    if os.path.exists(_shim) else None
+check("the gcloud shim exists, runs, and fails (so it really shadows gcloud)",
+      _shim_run is not None and _shim_run.returncode != 0
+      and not _shim_run.stdout.strip(), str(_shim_run))
 check("shadowing keeps openssl available (the CLI signs JWTs with it)",
       any(os.path.exists(os.path.join(d, "openssl"))
           for d in _env["PATH"].split(os.pathsep) if d), _env["PATH"][:200])

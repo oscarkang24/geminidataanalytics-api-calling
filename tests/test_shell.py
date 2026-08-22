@@ -19,9 +19,10 @@ check("there are shell scripts to check", bool(SCRIPTS), str(SCRIPTS))
 
 for path in SCRIPTS:
     rel = os.path.relpath(path, REPO)
-    src = open(path).read()
+    src = open(path, encoding="utf-8").read()
 
-    p = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+    p = subprocess.run(["bash", "-n", path], capture_output=True, text=True,
+                       timeout=60)
     check(f"{rel}: parses", p.returncode == 0, p.stderr.strip()[:200])
 
     nounset = re.search(r"^\s*set\s+-[a-z]*u", src, re.M) is not None
@@ -92,10 +93,11 @@ for path in SCRIPTS:
 # The CLI and the tests shell out to openssl too; the deny-list has to reach
 # those call sites, not just the .sh files.
 for rel in ("scripts/gda.py", "tests/test_auth.py", "tests/test_tls.py"):
-    raw_src = open(os.path.join(REPO, rel)).read()
+    raw_src = open(os.path.join(REPO, rel), encoding="utf-8").read()
     # Strip comments and docstring prose: naming a banned flag in an
     # explanation is not the same as calling it.
-    src = "\n".join(l.split("#", 1)[0] for l in raw_src.splitlines())
+    src = "\n".join("" if l.lstrip().startswith("#") else l
+                    for l in raw_src.splitlines())
     bad = []
     for pat, why in (("-addext", "openssl -addext is OpenSSL 1.1.1+; LibreSSL lacks it"),
                      ("-noenc", "openssl -noenc is OpenSSL 3+; use -nodes"),

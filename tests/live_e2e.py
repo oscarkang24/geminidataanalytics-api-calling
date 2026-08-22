@@ -45,7 +45,9 @@ def main():
     ap.add_argument("--bq-table", required=True, help="project.dataset.table you can read")
     # Agent delete is a SOFT delete: the id stays reserved for ~30 days, so a
     # fixed id would make the second run of this script fail with ALREADY_EXISTS.
-    stamp = str(int(time.time()))
+    # Seconds alone collide when two runs start inside the same second — the
+    # pid keeps them distinct without needing a clock.
+    stamp = f"{int(time.time())}-{os.getpid()}"
     ap.add_argument("--agent-id", default="eval-agent-" + stamp)
     ap.add_argument("--conversation-id", default="eval-conv-" + stamp)
     a = ap.parse_args()

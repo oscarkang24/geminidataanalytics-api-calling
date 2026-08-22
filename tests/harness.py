@@ -5,7 +5,7 @@ Starts a local HTTP server that records the exact request the CLI sends, runs
 the CLI against it, and asserts on method/path/query/headers/body plus the
 CLI's stdout/stderr/exit code.
 """
-import json, os, subprocess, sys, tempfile, threading, urllib.parse
+import atexit, json, os, shutil, subprocess, sys, tempfile, threading, urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,7 +56,14 @@ results = []
 # developer laptop with gcloud, an ADC file, or $GOOGLE_APPLICATION_CREDENTIALS
 # set, or a GCE box whose metadata server answers. Every run starts from a
 # scrubbed environment; a test that wants a source opts in through env_extra.
-_EMPTY_CFG = tempfile.mkdtemp(prefix="gda-empty-cfg-")
+def _tmpdir(prefix):
+    """A temp dir that removes itself, so runs don't accumulate in /tmp."""
+    path = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
+_EMPTY_CFG = _tmpdir("gda-empty-cfg-")
 _SCRUB = ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "GDA_PROJECT",
           "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT",
           "CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_CLOUD_QUOTA_PROJECT",
@@ -71,7 +78,7 @@ def _path_shadowing_gcloud():
     which shares /usr/bin or /opt/homebrew/bin with gcloud on many machines.
     Shadowing it keeps the rest of PATH intact.
     """
-    shim_dir = tempfile.mkdtemp(prefix="gda-no-gcloud-")
+    shim_dir = _tmpdir("gda-no-gcloud-")
     shim = os.path.join(shim_dir, "gcloud")
     with open(shim, "w") as f:
         f.write("#!/bin/sh\necho 'gcloud: not configured (test shim)' >&2\nexit 1\n")
@@ -90,11 +97,19 @@ def hermetic_env():
     env["GCE_METADATA_HOST"] = "127.0.0.1:1"     # refused instantly, never resolves
     env["PATH"] = _NO_GCLOUD_PATH                # gcloud shadowed, not removed
     env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
-    env["no_proxy"] = "127.0.0.1,localhost"; env["NO_PROXY"] = env["no_proxy"]
+    env["no_proxy"] = "127.0.0.1,localhost,::1"; env["NO_PROXY"] = env["no_proxy"]
+    for var in ("https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        env.pop(var, None)
+    # argparse wraps --help to $COLUMNS, and an ASCII locale makes text=True
+    # subprocesses fail on the non-ASCII in the docs and in test messages.
+    env["COLUMNS"] = "120"
+    env["TERM"] = "dumb"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     return env
 
 
-def run(argv, stdin=None, status=200, body=None, env_extra=None, expect_call=True):
+def run(argv, stdin=None, status=200, body=None, env_extra=None):
     """Run the CLI against the mock; return (proc, captured_request_or_None)."""
     CAPTURED.clear()
     RESPONSE["status"] = status
@@ -106,10 +121,7 @@ def run(argv, stdin=None, status=200, body=None, env_extra=None, expect_call=Tru
     proc = subprocess.run(
         [sys.executable, CLI, "--host", HOST] + argv,
         input=stdin, capture_output=True, text=True, env=env, timeout=60)
-    cap = CAPTURED[0] if CAPTURED else None
-    if expect_call and cap is None:
-        pass
-    return proc, cap
+    return proc, CAPTURED[0] if CAPTURED else None
 
 
 def check(name, cond, detail=""):

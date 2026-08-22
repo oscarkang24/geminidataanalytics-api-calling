@@ -11,6 +11,9 @@ cd "$(dirname "$0")/.."
 
 # On a Mac without the Xcode command line tools, /usr/bin/python3 is a stub
 # that opens an installer dialog and exits non-zero. Fail with a reason.
+# An ASCII locale (LC_ALL=C) would make open() fail on the non-ASCII
+# in the docs; UTF-8 mode is independent of the locale.
+export PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 PY="${PYTHON:-python3}"
 command -v "$PY" >/dev/null 2>&1 || {
   echo "error: '$PY' not found. Install Python 3 (macOS: xcode-select --install)," >&2
