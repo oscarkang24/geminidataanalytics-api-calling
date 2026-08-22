@@ -15,7 +15,9 @@ description: >
   before creating anything. Read-only checks like `doctor` and `agents list`
   are fine to run first, and make for a better question. Wraps the REST
   endpoints in a dependency-free Python CLI using Application Default
-  Credentials. Do NOT use for: writing or running
+  Credentials. Requires Google Cloud credentials and a billing project: run
+  `gda.py doctor` first, and if it fails, report to the user and stop —
+  credentials cannot be obtained from inside a session. Do NOT use for: writing or running
   plain BigQuery SQL, inspecting or altering table schemas, local CSV or pandas
   analysis, general-purpose or customer-support chatbots, or other Google agent
   products (Vertex AI Agent Builder / Agentspace, ADK / Agent Engine,
@@ -23,6 +25,31 @@ description: >
 ---
 
 # Gemini Data Analytics HTTP API
+
+## Before anything else: this skill needs credentials you may not have
+
+Every command here calls a Google Cloud API. **Run `python3 scripts/gda.py
+doctor` before the first API call in a session.** It reports credentials,
+project, and whether the API is reachable and authorized, in one command.
+
+**If `doctor` fails, stop and tell the user. Do not investigate the
+environment.** A missing credential is a prerequisite the session cannot
+satisfy on its own: obtaining one needs an interactive browser login, or a
+service-account key file, or an environment that supplies one — all of which
+require the user. Searching the filesystem for key files, probing proxies, or
+trying tokens found in environment variables wastes turns and finds nothing,
+because `doctor` has already walked every source the CLI supports and printed
+why each one missed.
+
+What to tell the user: which source `doctor` named (or that none was found),
+that the network is or is not the problem (`doctor` says so explicitly), and
+the specific fix from its output — it adapts to the machine, and will not
+suggest `gcloud` on a machine that does not have it. Then stop and wait.
+
+The one exception: if `doctor` reports `[warn]` on a credential's *shape*, say
+so — a placeholder in an early slot silently shadows every later source, and
+the fix is to `unset` it rather than to add another credential.
+
 
 Full CRUD over the public Conversational Analytics API at
 `https://geminidataanalytics.googleapis.com`. Two service surfaces:

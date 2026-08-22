@@ -890,6 +890,14 @@ def doctor(c, args):
             print(f"{mark} credentials checked against the API: {detail}")
         print("[..]   checking host reachability without credentials")
         print("       " + _probe_host(c))
+        # Say plainly that this is a prerequisite, not a puzzle: without it a
+        # session burns turns hunting for credentials that are not there.
+        problems.append(
+            "This is a prerequisite, not something to debug from here: every "
+            "source above has already been checked. Obtaining a credential "
+            "needs a browser login, a key file, or an environment that "
+            "supplies one — all of which need the user. Report the above and "
+            "stop rather than searching further.")
         _die("\n\n".join(problems))
     print(f"[..]   calling {c.host}/{c.version}/{c.parent}/dataAgents")
     # Any failure here (API disabled, no permission) _dies with the API's own

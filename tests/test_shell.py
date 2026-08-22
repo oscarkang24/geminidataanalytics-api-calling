@@ -130,4 +130,18 @@ for var in sorted(credential_vars):
           f"${var} is read by gda.py but never documented — it silently "
           "shadows every source below it")
 
+# The credential prerequisite must be stated before the usage examples, or a
+# cold session discovers it by trial and error instead of being told.
+head = skill_md[:skill_md.index("## The CLI")] if "## The CLI" in skill_md else skill_md
+check("SKILL.md states the credential prerequisite before the usage examples",
+      "doctor" in head and "credentials" in head.lower(), head[-200:])
+check("SKILL.md tells a session to stop rather than investigate",
+      "stop" in head.lower() and "do not investigate" in head.lower(), "")
+check("the skill description names the prerequisite",
+      "doctor" in skill_md[:skill_md.index("---", 10)], "")
+
+gda_doctor = gda_src[gda_src.index("def doctor("):]
+check("doctor's own failure output says it is a prerequisite, not a puzzle",
+      "prerequisite" in gda_doctor and "stop" in gda_doctor.lower(), "")
+
 sys.exit(summary())
