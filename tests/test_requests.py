@@ -272,6 +272,46 @@ p, _ = run(["--project", "p", "--help"])
 check("--help says v1 is the default", "v1 (GA, default)" in p.stdout and "v1beta (default)" not in p.stdout,
       [l for l in p.stdout.splitlines() if "--version" in l])
 
+print("\n--- a value that cannot be a token is not reported as credentials ---")
+import importlib.util as _i2
+_sp = _i2.spec_from_file_location("gda2", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gda.py"))
+_g = _i2.module_from_spec(_sp); _sp.loader.exec_module(_g)
+for bad, label in (("proxy-injected", "the placeholder that caused this"),
+                   ("changeme", "a generic placeholder"),
+                   ("short", "too short, no dots"),
+                   ("has space in it", "whitespace"),
+                   ("", "empty")):
+    check(f"flagged as not-a-token: {label}", _g._token_shape_warning(bad) is not None,
+          f"{bad!r} -> {_g._token_shape_warning(bad)!r}")
+for good, label in (("ya29." + "A" * 120, "a ya29 access token"),
+                    ("a.b." + "c" * 60, "a JWT-shaped token")):
+    check(f"NOT flagged: {label}", _g._token_shape_warning(good) is None,
+          f"{good[:20]}... -> {_g._token_shape_warning(good)!r}")
+
+p_, c_ = run(["doctor"], env_extra={"GDA_ACCESS_TOKEN": "proxy-injected",
+                                    "GOOGLE_CLOUD_PROJECT": "p"},
+             body={"dataAgents": []})
+check("doctor warns instead of printing [ok] for a placeholder",
+      "[warn]" in p_.stdout and "placeholder" in p_.stdout and "[ok]   credentials" not in p_.stdout,
+      p_.stdout[:300])
+p_, c_ = run(["doctor"], env_extra={"GDA_ACCESS_TOKEN": "ya29." + "A" * 120,
+                                    "GOOGLE_CLOUD_PROJECT": "p"},
+             body={"dataAgents": []})
+check("a plausible token is reported as found, but provisional",
+      "[warn]" not in p_.stdout and "not proven until a call succeeds" in p_.stdout, p_.stdout[:300])
+
+print("\n--- a project failure no longer hides an unusable token ---")
+p_, c_ = run(["doctor"], env_extra={"GDA_ACCESS_TOKEN": "ya29." + "A" * 120,
+                                    "GDA_PROJECT": "", "GOOGLE_CLOUD_PROJECT": ""},
+             status=401, body={"error": {"code": 401, "status": "UNAUTHENTICATED",
+                                          "details": [{"reason": "ACCESS_TOKEN_TYPE_UNSUPPORTED"}]}})
+check("doctor still checks the credential when the project is unknown",
+      "credentials checked against the API" in p_.stdout, p_.stdout[:400])
+check("...and names the 401 as the token being unusable",
+      "ACCESS_TOKEN_TYPE_UNSUPPORTED" in p_.stdout or "not a usable OAuth token" in p_.stdout,
+      p_.stdout[:400])
+
 print("\n--- clean errors, never tracebacks ---")
 NOTB = lambda pr: "Traceback" not in pr.stderr
 p_, c_ = run(["--project", "p", "agents", "list"], env_extra={"GDA_TIMEOUT": "5m"})

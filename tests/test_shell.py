@@ -120,4 +120,14 @@ installer = open(os.path.join(REPO, "install.sh"), encoding="utf-8").read()
 for f in INSTALLED:
     check(f"install.sh ships {f}", f.split("/")[-1] in installer, "")
 
+# The documented credential chain must match the implemented one: a source in
+# the code but not the docs is invisible, and it shadows everything below it.
+gda_src = open(os.path.join(REPO, "scripts", "gda.py"), encoding="utf-8").read()
+env_reads = set(_re.findall(r'os\.environ\.get\("([A-Z_]+)"', gda_src))
+credential_vars = {v for v in env_reads if "TOKEN" in v or "CREDENTIALS" in v}
+for var in sorted(credential_vars):
+    check(f"SKILL.md documents ${var}", var in skill_md,
+          f"${var} is read by gda.py but never documented — it silently "
+          "shadows every source below it")
+
 sys.exit(summary())

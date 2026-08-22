@@ -39,10 +39,18 @@ machine:
 | | token | project |
 | --- | --- | --- |
 | 1 | `$GDA_ACCESS_TOKEN` | `--project` |
-| 2 | `$GOOGLE_APPLICATION_CREDENTIALS` service-account key (signed JWT grant) | `$GDA_PROJECT` / `$GOOGLE_CLOUD_PROJECT` / `$GCLOUD_PROJECT` / `$CLOUDSDK_CORE_PROJECT` |
-| 3 | gcloud ADC file (refresh-token grant) | ADC `quota_project_id` / key `project_id` |
-| 4 | GCE / Cloud Run metadata server | metadata server |
-| 5 | `gcloud auth [application-default] print-access-token` | `gcloud config get-value project` |
+| 2 | `$CLOUDSDK_AUTH_ACCESS_TOKEN` (gcloud's own override) | `$GDA_PROJECT` / `$GOOGLE_CLOUD_PROJECT` / `$GCLOUD_PROJECT` / `$CLOUDSDK_CORE_PROJECT` |
+| 3 | `$GOOGLE_APPLICATION_CREDENTIALS` service-account key (signed JWT grant) | ADC `quota_project_id` / key `project_id` |
+| 4 | gcloud ADC file (refresh-token grant) | metadata server |
+| 5 | GCE / Cloud Run metadata server | `gcloud config get-value project` |
+| 6 | `gcloud auth [application-default] print-access-token` | |
+
+**Each chain is first-non-empty-wins.** A stale or placeholder value in an
+early slot silently disables every source below it — set
+`$CLOUDSDK_AUTH_ACCESS_TOKEN=proxy-injected` and a perfectly good
+service-account key is never reached. `doctor` names the winning source and
+warns when its value cannot be a real token, so start there and `unset` the
+impostor rather than adding another credential on top of it.
 
 Setting `$GOOGLE_APPLICATION_CREDENTIALS` names the identity to use: if no token
 can be obtained from it the CLI fails rather than quietly running as a different
@@ -211,7 +219,7 @@ guess when the answer changes what gets created:
 | Symptom | Meaning | Fix |
 | --- | --- | --- |
 | `401 UNAUTHENTICATED`, `CREDENTIALS_MISSING` | No token was sent. | `doctor` — discovery found nothing. |
-| `401 UNAUTHENTICATED`, `ACCESS_TOKEN_TYPE_UNSUPPORTED` | A token was sent but is not a usable OAuth token for this API (a placeholder, an API key, the wrong token type). | Check which source `doctor`/`-v` names, and replace it. |
+| `401 UNAUTHENTICATED`, `ACCESS_TOKEN_TYPE_UNSUPPORTED` | A token was sent but is not a usable OAuth token for this API (a placeholder, an API key, the wrong token type). | `doctor` names the winning source — `unset` it so the next source in the chain is reached. Google's link in this error points at *web* sign-in and is a red herring for server-side use. |
 | `403 PERMISSION_DENIED`, `SERVICE_DISABLED` | The API is not enabled on the project. | `gcloud services enable geminidataanalytics.googleapis.com --project PROJECT` |
 | `403 PERMISSION_DENIED` (other) | The identity lacks `geminidataanalytics.*`, or cannot read the BigQuery table. | Grant the roles; confirm which identity is in use with `-v`. |
 | `404` with an **HTML** body | Wrong path or API version — not a missing resource. | Check the path against `REFERENCE.md`; stay on `v1`. |

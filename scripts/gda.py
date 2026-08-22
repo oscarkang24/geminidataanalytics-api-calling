@@ -779,6 +779,60 @@ def _render_data(data_msg):
 # Doctor
 # ---------------------------------------------------------------------------
 
+PLACEHOLDER_HINTS = ("proxy-inject", "changeme", "change-me", "placeholder",
+                     "your-token", "replace_me", "replaceme", "xxx", "todo")
+
+
+def _token_shape_warning(tok):
+    """Flag a value that cannot be a Google OAuth access token.
+
+    Real ones are long — `ya29.`-prefixed or a dotted JWT. Reporting a 14-char
+    placeholder as working credentials sends people at the wrong failure, so
+    say so before the API does.
+    """
+    t = (tok or "").strip()
+    if not t:
+        return "is empty"
+    low = t.lower()
+    for hint in PLACEHOLDER_HINTS:
+        if hint in low:
+            return f'looks like a placeholder, not a token: "{t[:40]}"'
+    if any(c.isspace() for c in t):
+        return "contains whitespace — it may be truncated or badly quoted"
+    if len(t) < 20 and "." not in t:
+        return (f'is {len(t)} characters with no dots — an OAuth access token '
+                'is much longer (ya29.… or a dotted JWT)')
+    return None
+
+
+def _verify_token(c, project):
+    """Ask the API whether the token is usable.
+
+    Answerable without a real project: an unusable token is rejected with 401
+    before the project is ever looked at, so this works even when project
+    discovery failed.
+    """
+    url = f"{c.host}/{c.version}/projects/{project}/locations/global/dataAgents"
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {c.token}",
+        "x-goog-user-project": project})
+    try:
+        with _urlopen(req, timeout=min(c.timeout, 30)):
+            return True, "accepted by the API"
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        if e.code == 401:
+            why = ("the token is not a usable OAuth token for this API "
+                   "(ACCESS_TOKEN_TYPE_UNSUPPORTED)"
+                   if "ACCESS_TOKEN_TYPE_UNSUPPORTED" in body
+                   else "the API rejected the token")
+            return False, f"HTTP 401 — {why}"
+        return True, (f"accepted (HTTP {e.code} against a placeholder project, "
+                      "which is expected)")
+    except Exception as e:
+        return None, f"could not check: {e}"
+
+
 def _probe_host(c):
     """One unauthenticated request, purely to separate auth from network."""
     url = f"{c.host}/{c.version}/projects/-/locations/global/dataAgents"
@@ -800,15 +854,23 @@ def _probe_host(c):
 def doctor(c, args):
     """Report whether the CLI can run with no flags, and what is missing."""
     problems = []
+    have_token = True
     if c._token:
-        print("[ok]   credentials: --access-token")
+        c._token_source = "--access-token"
     else:
         try:
             c._token, c._token_source = get_token()
-            print(f"[ok]   credentials: {c._token_source}")
         except Unavailable as e:
+            have_token = False
             print("[FAIL] credentials: none found")
             problems.append(str(e))
+    if have_token:
+        warn = _token_shape_warning(c._token)
+        if warn:
+            print(f"[warn] credentials: {c._token_source} — the value {warn}")
+        else:
+            print(f"[ok]   credentials: found via {c._token_source} "
+                  "(not proven until a call succeeds)")
     if c._project:
         print(f"[ok]   project: {c._project} (from --project)")
     else:
@@ -819,8 +881,13 @@ def doctor(c, args):
             print("[FAIL] project: could not be determined")
             problems.append(str(e))
     if problems:
-        # Report reachability even when discovery failed: "is it auth or is it
-        # the network?" is the first fork, and dying here answered neither.
+        # Credentials and project fail independently. Stopping here on a
+        # missing project would leave an unusable token undetected — exactly
+        # what made the documented first command misdirect.
+        if have_token:
+            ok, detail = _verify_token(c, "gda-doctor-probe")
+            mark = {True: "[ok]  ", False: "[FAIL]", None: "[??]  "}[ok]
+            print(f"{mark} credentials checked against the API: {detail}")
         print("[..]   checking host reachability without credentials")
         print("       " + _probe_host(c))
         _die("\n\n".join(problems))
