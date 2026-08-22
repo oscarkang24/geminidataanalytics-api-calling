@@ -56,8 +56,15 @@ class Client:
         self.location = location
         self.version = version
         self.host = host.rstrip("/")
-        self.token = token or get_token()
+        self._token = token
         self.verbose = verbose
+
+    @property
+    def token(self):
+        # Fetched lazily: a bad-flags error should surface before an auth error.
+        if not self._token:
+            self._token = get_token()
+        return self._token
 
     @property
     def parent(self):
@@ -95,7 +102,7 @@ class Client:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")
-            _die(f"HTTP {e.code} {e.reason}\n{detail}")
+            _die(f"HTTP {e.code} {e.reason}\n{_error_detail(detail)}")
         except urllib.error.URLError as e:
             _die(f"connection failed: {e.reason}")
         if not raw:
@@ -104,6 +111,22 @@ class Client:
             return json.loads(raw)
         except json.JSONDecodeError:
             return raw
+
+
+def _error_detail(body):
+    """Render an HTTP error body.
+
+    JSON `google.rpc.Status` bodies pass through in full. Anything else — most
+    often the multi-KB HTML page the API front end serves for an unknown path —
+    is trimmed to a hint, so the real cause isn't buried in markup.
+    """
+    body = body.strip()
+    try:
+        json.loads(body)
+    except ValueError:
+        return ("non-JSON error body (usually a wrong path or API version)\n"
+                + body[:200])
+    return body
 
 
 def out(obj):
@@ -185,11 +208,14 @@ def agents_update(c, args):
     if args.system_instruction is not None:
         ctx["systemInstruction"] = args.system_instruction
         mask.append("data_analytics_agent.published_context.system_instruction")
+    if getattr(args, "python", False):
+        ctx.setdefault("options", {})["analysis"] = {"python": {"enabled": True}}
+        mask.append("data_analytics_agent.published_context.options.analysis")
     if ctx:
         agent["dataAnalyticsAgent"] = {"publishedContext": ctx}
     if not mask:
         _die("nothing to update; pass --display-name / --description / "
-             "--bq-table / --system-instruction")
+             "--bq-table / --system-instruction / --python")
     path = f"{c.parent}/dataAgents/{args.agent_id}:updateSync"
     out(c.request("PATCH", path, body=agent, query={"updateMask": ",".join(mask)}))
 
@@ -232,6 +258,17 @@ def conversations_messages(c, args):
 # ---------------------------------------------------------------------------
 
 def _chat_body(c, args):
+    # An agent brings its own context, so inline-context flags would be dropped
+    # on the floor. Silently answering from the *agent's* table when the user
+    # named a different one is a wrong answer, so refuse instead.
+    ignored = [f for f, v in (("--bq-table", args.bq_table),
+                              ("--system-instruction", args.system_instruction),
+                              ("--python", getattr(args, "python", False))) if v]
+    if (args.agent_id or args.conversation_id) and ignored:
+        _die(", ".join(ignored) + " cannot be combined with --agent-id/"
+             "--conversation-id: the agent's own context is used instead. "
+             "Either drop --agent-id to chat with inline context, or bake these "
+             "into the agent with `agents update`.")
     body = {
         "parent": c.parent,
         "messages": [{"userMessage": {"text": args.message}}],
@@ -266,6 +303,15 @@ def chat(c, args):
         print(_final_answer(resp))
     else:
         out(resp)
+    # A stream that fails partway still returns HTTP 200 with an `error` element
+    # appended to the array. Printing the partial answer and exiting 0 would
+    # report a truncated result as a complete one, so fail loudly instead.
+    errors = [m["error"] for m in resp
+              if isinstance(m, dict) and isinstance(m.get("error"), dict)] \
+        if isinstance(resp, list) else []
+    if errors:
+        _die("the response stream ended in an error; the answer above is "
+             "incomplete:\n" + json.dumps(errors, indent=2))
 
 
 def _final_answer(messages):
@@ -346,7 +392,7 @@ def build_parser():
     p.add_argument("--project", required=True, help="GCP project id (billing/quota)")
     p.add_argument("--location", default=DEFAULT_LOCATION, help="default: global")
     p.add_argument("--version", default=DEFAULT_VERSION,
-                   help="API version: v1beta (default), v1alpha, v1")
+                   help="API version: v1 (GA, default), v1beta, v1alpha")
     p.add_argument("--host", default=DEFAULT_HOST)
     p.add_argument("--access-token",
                    help="OAuth2 access token to use instead of gcloud ADC; "

@@ -68,7 +68,10 @@ python3 scripts/gda.py --project P agents update --agent-id my-agent --display-n
 python3 scripts/gda.py --project P agents delete --agent-id my-agent
 ```
 
-`--bq-table` is repeatable to give an agent multiple tables.
+`--bq-table` is repeatable to give an agent multiple tables. `--python` enables
+Python analysis in the context (on `create` and `update` alike). `update` masks
+each field individually, so changing the table never clobbers the system
+instruction.
 
 ### Conversations
 
@@ -104,6 +107,15 @@ python3 scripts/gda.py --project P chat --agent-id my-agent \
 **JSON array** of `Message` objects (thoughts, generated SQL, query results, and
 the final answer). Add `--answer-only` to print just the `FINAL_RESPONSE` text.
 
+An agent supplies its own context, so the inline-context flags (`--bq-table`,
+`--system-instruction`, `--python`) **cannot** be combined with `--agent-id` /
+`--conversation-id` — the CLI rejects that rather than silently answering from
+the agent's table. Bake the change into the agent with `agents update` instead.
+
+A stream that fails partway still returns HTTP 200 with an `error` element
+appended to the array; the CLI prints the partial answer, reports the error on
+stderr, and exits non-zero.
+
 ### Raw escape hatch
 
 For public endpoints the CLI doesn't wrap (e.g. IAM policy):
@@ -129,3 +141,5 @@ python3 scripts/gda.py --project P raw GET '{parent}/dataAgents/my-agent' --body
   references. Use `raw` with a hand-built body for those, per `REFERENCE.md`.
 - **Version:** stick to `v1` (GA) for production. Some features are preview-only
   — notably `queryData` (v1beta/v1alpha). See `REFERENCE.md` for details.
+- A 404 with a non-JSON (HTML) body means the path or the API version is wrong,
+  not that the resource is missing — real misses return a JSON `NOT_FOUND`.

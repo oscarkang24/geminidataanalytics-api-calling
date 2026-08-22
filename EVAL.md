@@ -49,6 +49,9 @@ worse failure than a miss (A1) for an external skill — note them separately.
 
 ## B. End-to-end live
 
+Suite B is automated end-to-end by `tests/live_e2e.py` — run that to check the
+CLI mechanics, and use the table below when grading *Claude's* behaviour.
+
 ### Prerequisites
 
 1. `gcloud auth application-default login`

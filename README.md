@@ -60,6 +60,25 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 | `scripts/gda.py` | The standalone CLI. |
 | `REFERENCE.md` | Endpoint + payload reference for the API. |
 | `EVAL.md` | Manual eval cases (skill triggering + end-to-end live). |
+| `tests/` | Automated test suites (see below). |
+
+## Tests
+
+```bash
+bash tests/run_all.sh      # 127 checks, no credentials needed
+```
+
+| Suite | What it checks | Needs |
+| --- | --- | --- |
+| `tests/test_requests.py` | Every command's exact method / path / query / headers / body, asserted against a capturing mock HTTP server, plus error handling and `--answer-only` rendering. | nothing |
+| `tests/test_docs.py` | Every command shown in `SKILL.md` and `README.md` actually parses and runs. | nothing |
+| `tests/test_live_routes.py` | Each URL the CLI builds resolves to the expected RPC on the **real** API. Unauthenticated calls return 401 naming the resolved method, while a wrong path returns 404 — so this validates routing without credentials. | network |
+| `tests/live_e2e.py` | Full create → chat → converse → update → delete lifecycle (suite B of `EVAL.md`), with cleanup. | real credentials |
+
+```bash
+export GDA_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+python3 tests/live_e2e.py --project PROJECT --bq-table PROJECT.dataset.orders
+```
 
 ## Using as a Claude Code skill
 
