@@ -24,6 +24,7 @@ import argparse
 import base64
 import json
 import os
+import socket
 import ssl
 import subprocess
 import sys
@@ -42,6 +43,9 @@ SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 METADATA_HOST = os.environ.get("GCE_METADATA_HOST", "metadata.google.internal")
 PROJECT_ENV_VARS = ("GDA_PROJECT", "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT",
                     "CLOUDSDK_CORE_PROJECT")
+# Generous, because :chat generates SQL and runs it against BigQuery — but never
+# unbounded: without this a stalled connection hangs the CLI forever.
+DEFAULT_TIMEOUT = 300
 
 
 def _die(msg):
@@ -265,7 +269,8 @@ def detect_project():
 
 
 class Client:
-    def __init__(self, project, location, version, host, token=None, verbose=False):
+    def __init__(self, project, location, version, host, token=None, verbose=False,
+                 timeout=DEFAULT_TIMEOUT):
         self._project = project
         self._project_source = "--project" if project else None
         self.location = location
@@ -274,6 +279,7 @@ class Client:
         self._token = token
         self._token_source = "--access-token" if token else None
         self.verbose = verbose
+        self.timeout = timeout
 
     # Both are resolved lazily, so a bad-flags error surfaces before we go
     # looking for credentials or a project.
@@ -330,11 +336,14 @@ class Client:
                 print("# body: " + json.dumps(body), file=sys.stderr)
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with _urlopen(req) as resp:
+            with _urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")
             _die(f"HTTP {e.code} {e.reason}\n{_error_detail(detail)}")
+        except socket.timeout:
+            _die(f"request timed out after {self.timeout}s. Raise it with "
+                 "--timeout SECONDS (or $GDA_TIMEOUT) if the query is slow.")
         except urllib.error.URLError as e:
             _die(_connection_error(e))
         if not raw:
@@ -739,6 +748,10 @@ def build_parser():
     p.add_argument("--access-token",
                    help="OAuth2 access token, skipping credential discovery; "
                         "falls back to $GDA_ACCESS_TOKEN")
+    p.add_argument("--timeout", type=float,
+                   default=float(os.environ.get("GDA_TIMEOUT") or DEFAULT_TIMEOUT),
+                   help=f"per-request timeout in seconds (default {DEFAULT_TIMEOUT}); "
+                        "also settable via $GDA_TIMEOUT")
     p.add_argument("-v", "--verbose", action="store_true",
                    help="print request method/URL/body to stderr")
     sub = p.add_subparsers(dest="resource", required=True)
@@ -848,6 +861,7 @@ def main(argv=None):
         host=args.host,
         token=args.access_token,
         verbose=args.verbose,
+        timeout=args.timeout,
     )
     args.func(c, args)
 

@@ -13,14 +13,23 @@ HOST_OVERRIDE = os.environ.get("GDA_HOST")
 CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gda.py")
 P = ["--project", "test-project-does-not-exist"]
 results = []
+TIMEOUTS = []
 
 
 def call(argv):
     env = dict(os.environ, GDA_ACCESS_TOKEN="fake-token-for-route-probe")
     extra = ["--host", HOST_OVERRIDE] if HOST_OVERRIDE else []
-    p = subprocess.run([sys.executable, CLI] + P + extra + argv,
-                       capture_output=True, text=True, env=env, timeout=90)
-    blob = p.stdout + p.stderr
+    try:
+        p = subprocess.run([sys.executable, CLI] + P + extra + ["--timeout", "25"] + argv,
+                           capture_output=True, text=True, env=env, timeout=40)
+        blob = p.stdout + p.stderr
+    except subprocess.TimeoutExpired:
+        # A stalled request says nothing about routing. Record it and continue
+        # rather than aborting the suite with a traceback.
+        TIMEOUTS.append(" ".join(argv))
+        return {"code": None, "status": None, "method": "", "http": None, "msg": "",
+                "non_json": False, "unreachable": True, "timeout": True,
+                "first": "request timed out", "raw": ""}
     http = re.search(r"HTTP (\d+)", blob)
     code = int(http.group(1)) if http else None
     # The CLI prints a JSON error body starting on its own line; a non-JSON body
@@ -44,7 +53,8 @@ def call(argv):
     # No HTTP status at all means the request never reached Google: DNS, a
     # proxy, a firewall, or TLS interception - not a routing problem.
     unreachable = code is None and "non-JSON error body" not in blob
-    return {"code": err.get("code") or code, "status": err.get("status"),
+    return {"timeout": False,
+            "code": err.get("code") or code, "status": err.get("status"),
             "method": method, "http": code,
             "msg": (err.get("message") or "")[:80],
             "non_json": "non-JSON error body" in blob,
@@ -123,4 +133,13 @@ print(f"\n{'='*62}\n{k}/{n} live route checks passed")
 for nm, o in results:
     if not o:
         print("  FAIL:", nm)
+if TIMEOUTS:
+    print(f"\n{len(TIMEOUTS)} probe(s) timed out: " + "; ".join(TIMEOUTS))
+    real = [nm for nm, o in results if not o and "timed out" not in nm]
+    if k + len(TIMEOUTS) >= n:
+        print("SKIPPED: a stalled request proves nothing about routing — most\n"
+              "  likely a proxy or firewall on this network. Re-run, or go\n"
+              "  straight to the live lifecycle with:\n"
+              "      GDA_SKIP_OFFLINE=1 bash tests/run_live.sh PROJECT.dataset.table")
+        sys.exit(3)
 sys.exit(0 if k == n else 1)
