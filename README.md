@@ -73,6 +73,7 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 | `EVAL.md` | Manual eval cases (skill triggering + end-to-end live). |
 | `tests/` | Automated test suites (see below). |
 | `evals/` | Runtime-behaviour evals: prompts plus `grade.py`, which scores a run's transcript and reply automatically. See `EVAL.md`. |
+| `evals/hero-queries.md` | Prompts to type at Claude Code to exercise the skill by hand, with what good and bad look like for each. |
 | `install.sh` | One-command install into a Claude Code skills folder. |
 
 ## Tests
