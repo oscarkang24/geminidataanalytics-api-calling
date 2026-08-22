@@ -79,6 +79,11 @@ python3 scripts/gda.py --project PROJECT [--location global] [--version v1] \
 bash tests/run_all.sh      # 192 checks, no credentials needed
 ```
 
+It ends with a per-suite `PASS` / `FAIL` / `SKIP` summary and names the
+command to re-run any failing suite on its own. A suite that skips itself
+(missing network, an `openssl` without the features it needs) is not a
+failure and does not block the live run.
+
 | Suite | What it checks | Needs |
 | --- | --- | --- |
 | `tests/test_requests.py` | Every command's exact method / path / query / headers / body, asserted against a capturing mock HTTP server, plus error handling and `--answer-only` rendering. | nothing |

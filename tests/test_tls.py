@@ -19,11 +19,25 @@ spec.loader.exec_module(gda)
 
 TMP = tempfile.mkdtemp(prefix="gda-tls-")
 key, crt = os.path.join(TMP, "k.pem"), os.path.join(TMP, "c.pem")
-subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                "-keyout", key, "-out", crt, "-days", "1",
-                "-subj", "/CN=localhost",
-                "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"],
-               check=True, capture_output=True)
+
+# Python requires a SAN, but `-addext` is OpenSSL 1.1.1+ and macOS ships
+# LibreSSL, which lacks it. A config file with an extension section works on
+# both.
+cnf = os.path.join(TMP, "openssl.cnf")
+with open(cnf, "w") as f:
+    f.write("[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n"
+            "[dn]\nCN=localhost\n"
+            "[ext]\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n"
+            "basicConstraints=CA:FALSE\n")
+gen = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                      "-keyout", key, "-out", crt, "-days", "1",
+                      "-config", cnf, "-extensions", "ext"],
+                     capture_output=True, text=True)
+if gen.returncode != 0:
+    print("SKIPPED: could not generate a test certificate with this openssl.\n"
+          f"  {(gen.stderr or '').strip()[:200]}\n"
+          "  These checks need openssl to emit a cert with a subjectAltName.")
+    sys.exit(3)
 
 
 class H(BaseHTTPRequestHandler):

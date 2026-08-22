@@ -88,9 +88,14 @@ write(os.path.join(adc_cfg, "application_default_credentials.json"), {
     "client_secret": "csecret", "refresh_token": "rtoken",
     "quota_project_id": "adc-project", "token_uri": OAUTH_URI})
 
-key_pem = subprocess.run(["openssl", "genpkey", "-algorithm", "RSA",
-                          "-pkeyopt", "rsa_keygen_bits:2048"],
-                         capture_output=True, text=True, check=True).stdout
+# `genrsa` works on OpenSSL and on the LibreSSL that macOS ships; `genpkey
+# -pkeyopt` does not reliably.
+_k = subprocess.run(["openssl", "genrsa", "2048"], capture_output=True, text=True)
+if _k.returncode != 0 or "PRIVATE KEY" not in _k.stdout:
+    print("SKIPPED: openssl could not generate an RSA key here.\n"
+          f"  {(_k.stderr or '').strip()[:200]}")
+    sys.exit(3)
+key_pem = _k.stdout
 sa_file = write(os.path.join(TMP, "sa.json"), {
     "type": "service_account", "client_email": "svc@sa-project.iam.gserviceaccount.com",
     "private_key": key_pem, "project_id": "sa-project", "token_uri": OAUTH_URI})
