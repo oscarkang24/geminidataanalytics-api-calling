@@ -14,6 +14,7 @@ from harness import check, summary  # noqa: E402
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = [os.path.join(REPO, "tests", f)
            for f in sorted(os.listdir(os.path.join(REPO, "tests"))) if f.endswith(".sh")]
+SCRIPTS += [os.path.join(REPO, f) for f in sorted(os.listdir(REPO)) if f.endswith(".sh")]
 
 check("there are shell scripts to check", bool(SCRIPTS), str(SCRIPTS))
 

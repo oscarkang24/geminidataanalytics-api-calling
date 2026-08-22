@@ -121,8 +121,16 @@ delete is a soft delete, and a fixed id would stay reserved for ~30 days).
 
 ## Using as a Claude Code skill
 
-Drop this directory into your Claude Code skills folder (e.g.
-`~/.claude/skills/geminidataanalytics/`). The skill activates on prompts like
+```bash
+bash install.sh                 # -> ~/.claude/skills/geminidataanalytics
+bash install.sh /some/dir       # or a different skills folder
+```
+
+It copies only what the skill needs at runtime (`SKILL.md`, `REFERENCE.md`,
+`scripts/gda.py`), verifies the installed CLI runs, and leaves the tests and
+evals behind. Restart Claude Code afterwards so it picks the skill up.
+
+The skill activates on prompts like
 "create a data agent", "chat with my data agent", or "ask a question over
 BigQuery with the Conversational Analytics API".
 
