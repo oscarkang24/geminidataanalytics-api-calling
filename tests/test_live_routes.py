@@ -9,6 +9,9 @@ auth, and echoes the resolved method in error.details[].metadata.method.
 """
 import json, os, re, subprocess, sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from harness import hermetic_env  # noqa: E402
+
 HOST_OVERRIDE = os.environ.get("GDA_HOST")
 CLI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts", "gda.py")
 P = ["--project", "test-project-does-not-exist"]
@@ -17,7 +20,7 @@ TIMEOUTS = []
 
 
 def call(argv):
-    env = dict(os.environ, GDA_ACCESS_TOKEN="fake-token-for-route-probe")
+    env = dict(hermetic_env(), GDA_ACCESS_TOKEN="fake-token-for-route-probe")
     extra = ["--host", HOST_OVERRIDE] if HOST_OVERRIDE else []
     try:
         p = subprocess.run([sys.executable, CLI] + P + extra + ["--timeout", "25"] + argv,

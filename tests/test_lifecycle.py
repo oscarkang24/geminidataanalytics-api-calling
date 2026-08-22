@@ -31,15 +31,13 @@ meta = HTTPServer(("127.0.0.1", 0), Meta)
 threading.Thread(target=meta.serve_forever, daemon=True).start()
 _, api_url = fake_api.start()
 
-env = dict(os.environ)
-for v in ("GDA_ACCESS_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "GDA_PROJECT",
-          "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"):
-    env.pop(v, None)
+# Reuse the harness scrub so an ambient $GDA_TIMEOUT, credential, or gcloud on
+# the developer's machine cannot change what this suite tests.
+from harness import hermetic_env  # noqa: E402
+
+env = hermetic_env()
 env["GCE_METADATA_HOST"] = f"127.0.0.1:{meta.server_address[1]}"
-env["CLOUDSDK_CONFIG"] = os.path.join(HERE, "_no_such_cfg")
 env["GDA_HOST"] = api_url
-env["no_proxy"] = env["NO_PROXY"] = "127.0.0.1,localhost"
-env.pop("http_proxy", None); env.pop("HTTP_PROXY", None)
 
 print("=== doctor (no flags) ===")
 d = subprocess.run([sys.executable, os.path.join(HERE, "..", "scripts", "gda.py"),
